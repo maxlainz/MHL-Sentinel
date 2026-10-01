@@ -689,6 +689,10 @@ class Database:
             )
             return cur.rowcount
 
+    def count_jobs(self, state: JobState) -> int:
+        row = self._query_one("SELECT COUNT(*) FROM jobs WHERE state = ?", (state.value,))
+        return int(row[0]) if row is not None else 0
+
     def list_jobs(self, limit: int = 50) -> list[JobRow]:
         """Most recent first."""
         rows = self._query("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,))

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "_macros.html" import err, envnote %}
+{% block title %}Settings · MHL Sentinel{% endblock %}
+{% block content %}
+<nav>
+  <ul><li><h1>Settings</h1></li></ul>
+  <ul><li><a href="/" role="button" class="secondary">Back</a></li></ul>
+</nav>
+{% if form.saved %}<p><mark>Saved. The new settings apply from the next round.</mark></p>{% endif %}
+{% for w in form.warnings %}<p><mark>{{ w }}</mark></p>{% endfor %}
+{% if form.errors %}<p class="field-error">Nothing was saved: please fix the fields marked below.</p>{% endif %}
+{{ err(form, "form") }}
+<form method="post" action="/settings">
+  <fieldset>
+    <legend><strong>Archive</strong></legend>
+    <label>Root folder
+      <input type="text" value="{{ s.archive_root }}" disabled>
+      <small>Set by the container mount.</small>
+    </label>
+    <label>Projects are
+      <input type="number" name="project_depth" min="1" step="1" value="{{ form.values.project_depth }}"
+             {% if form.errors.project_depth %}aria-invalid="true"{% endif %}>
+      <small>level(s) below the root.</small>{{ err(form, "project_depth") }}{{ envnote(env_overrides, "project_depth") }}
+    </label>
+    <label>Ignore folders starting with
+      <input type="text" name="ignore_prefixes" value="{{ form.values.ignore_prefixes }}"
+             {% if form.errors.ignore_prefixes %}aria-invalid="true"{% endif %}>
+      {{ err(form, "ignore_prefixes") }}{{ envnote(env_overrides, "ignore_prefixes") }}
+    </label>
+    <label>Exclude file types from manifests
+      <input type="text" name="exclude_globs" value="{{ form.values.exclude_globs }}" placeholder="*.md, *.txt"
+             {% if form.errors.exclude_globs %}aria-invalid="true"{% endif %}>
+      <small>Comma separated. Once a project is sealed its excluded types can only grow: removing
+        one later does not include those files in it again.</small>
+      {{ err(form, "exclude_globs") }}{{ envnote(env_overrides, "exclude_globs") }}
+    </label>
+  </fieldset>
+
+  <fieldset>
+    <legend><strong>Working hours</strong> (the app stays idle during them)</legend>
+    <fieldset role="group" aria-label="Days">
+    {% for value, label in days %}
+      <label><input type="checkbox" name="days" value="{{ value }}"
+             {% if value in form.values.days %}checked{% endif %}> {{ label }}</label>
+    {% endfor %}
+    </fieldset>
+    {{ err(form, "days") }}
+    <div class="grid">
+      <label>From
+        <input type="time" name="start" value="{{ form.values.start }}"
+               {% if form.errors.start %}aria-invalid="true"{% endif %}>
+        {{ err(form, "start") }}
+      </label>
+      <label>to
+        <input type="time" name="end" value="{{ form.values.end }}"
+               {% if form.errors.end %}aria-invalid="true"{% endif %}>
+        {{ err(form, "end") }}
+      </label>
+      <label>Time zone
+        <input type="text" name="timezone" value="{{ form.values.timezone }}" placeholder="Europe/Madrid"
+               {% if form.errors.timezone %}aria-invalid="true"{% endif %}>
+        {{ err(form, "timezone") }}{{ envnote(env_overrides, "timezone") }}
+      </label>
+    </div>
+    {{ envnote(env_overrides, "start") }}
+  </fieldset>
+
+  <fieldset>
+    <legend><strong>Sealing</strong></legend>
+    <label>Auto-seal new projects after
+      <input type="number" name="settle_hours" min="0" step="1" value="{{ form.values.settle_hours }}"
+             {% if form.errors.settle_hours %}aria-invalid="true"{% endif %}>
+      <small>hours without changes.</small>{{ err(form, "settle_hours") }}{{ envnote(env_overrides, "settle_hours") }}
+    </label>
+    <label>Re-verify every project every
+      <input type="number" name="verify_interval_days" min="1" step="1" value="{{ form.values.verify_interval_days }}"
+             {% if form.errors.verify_interval_days %}aria-invalid="true"{% endif %}>
+      <small>days.</small>{{ err(form, "verify_interval_days") }}{{ envnote(env_overrides, "verify_interval_days") }}
+    </label>
+  </fieldset>
+
+  <details {% if form.errors.scan_interval_minutes or form.errors.log_level %}open{% endif %}>
+    <summary>Advanced</summary>
+    <label>Hash algorithm
+      <input type="text" value="{{ s.hash_format }} (fixed)" disabled>
+    </label>
+    <label>Scan interval
+      <input type="number" name="scan_interval_minutes" min="1" step="1" value="{{ form.values.scan_interval_minutes }}"
+             {% if form.errors.scan_interval_minutes %}aria-invalid="true"{% endif %}>
+      <small>minutes.</small>{{ err(form, "scan_interval_minutes") }}{{ envnote(env_overrides, "scan_interval_minutes") }}
+    </label>
+    <label>Log level
+      <select name="log_level" {% if form.errors.log_level %}aria-invalid="true"{% endif %}>
+        {% for level in log_levels %}
+        <option value="{{ level }}" {% if level == form.values.log_level %}selected{% endif %}>{{ level }}</option>
+        {% endfor %}
+      </select>
+      {{ err(form, "log_level") }}
+    </label>
+    <label>Settings folder
+      <input type="text" value="{{ s.config_dir }}" disabled>
+    </label>
+    <label>Web port
+      <input type="text" value="{{ s.port }}" disabled>
+      <small>Root folder, settings folder and port are set by the container.</small>
+    </label>
+  </details>
+
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

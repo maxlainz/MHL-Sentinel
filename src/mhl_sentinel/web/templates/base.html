@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}MHL Sentinel{% endblock %}</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/htmx-ext-sse.js" defer></script>
+  <style>
+    .light { font-size: 1.1em; line-height: 1; }
+    .light.green { color: #2e9e5b; }
+    .light.amber { color: #d99a0b; }
+    .light.red { color: #d1343b; }
+    .light.grey { color: #8a8f98; }
+    .muted { color: var(--pico-muted-color); }
+    .projects li { list-style: none; display: flex; flex-wrap: wrap; gap: .25rem .75rem;
+                   align-items: baseline; padding: .4rem 0;
+                   border-bottom: 1px solid var(--pico-muted-border-color); }
+    .projects { padding: 0; }
+    .projects .name { font-weight: 600; word-break: break-word; }
+    .projects .text { flex: 1 1 16rem; }
+    .counters { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
+    .counters strong { font-size: 1.25em; }
+    .actions { display: flex; flex-wrap: wrap; gap: .75rem; }
+    .actions form { margin: 0; }
+    .field-error { color: #d1343b; display: block; }
+    .path { word-break: break-all; }
+    header.status p { margin-bottom: .25rem; }
+  </style>
+</head>
+<body>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="container"><small class="muted">MHL Sentinel · ASC MHL</small></footer>
+</body>
+</html>

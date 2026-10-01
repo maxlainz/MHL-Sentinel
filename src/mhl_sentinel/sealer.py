@@ -71,6 +71,8 @@ PRIORITY: dict[JobKind, int] = {
 }
 MANUAL_BONUS = 100
 
+ProgressFn = Callable[[int, int, int, int], None]  # files_done, files_total, bytes_done, total
+
 _UNTOUCHED = frozenset({ProjectState.IGNORED, ProjectState.QUEUED, ProjectState.HASHING})
 
 
@@ -477,6 +479,7 @@ class _Ctx:
     gate: Gate
     stop: threading.Event
     now_fn: Callable[[], datetime]
+    on_progress: ProgressFn | None = None
 
     def log(self, level: str, msg: str) -> None:
         self.db.log(self.job.id, level, msg, self.now_fn())
@@ -496,8 +499,13 @@ def run_job(
     gate: Gate,
     stop: threading.Event,
     now_fn: Callable[[], datetime] = utcnow,
+    on_progress: ProgressFn | None = None,
 ) -> None:
-    """Run one queued job to completion, review, requeue (``Stopped``) or failure."""
+    """Run one queued job to completion, review, requeue (``Stopped``) or failure.
+
+    ``on_progress(files_done, files_total, bytes_done, bytes_total)`` is called after each
+    progress write to the DB (the supervisor turns it into ``job.progress`` events).
+    """
     if job.project_id is None or job.kind not in (
         JobKind.SEAL,
         JobKind.APPEND,
@@ -510,7 +518,15 @@ def run_job(
         db.set_job_state(job.id, JobState.FAILED, now_fn(), error="project not found")
         return
     ctx = _Ctx(
-        db, settings, job, project, settings.archive_root / project.rel_path, gate, stop, now_fn
+        db,
+        settings,
+        job,
+        project,
+        settings.archive_root / project.rel_path,
+        gate,
+        stop,
+        now_fn,
+        on_progress,
     )
     db.set_job_state(job.id, JobState.RUNNING, now_fn())
     db.set_state(project.id, ProjectState.HASHING, review_reason=project.review_reason)
@@ -556,8 +572,10 @@ def _hash(
 
     def progress(files_done: int, files_total: int, bytes_done: int, bytes_total: int) -> None:
         ctx.db.update_job_progress(ctx.job.id, files_done, files_total, bytes_done, bytes_total)
+        if ctx.on_progress is not None:
+            ctx.on_progress(files_done, files_total, bytes_done, bytes_total)
 
-    ctx.db.update_job_progress(ctx.job.id, 0, len(files), 0, sum(f.size for f in files))
+    progress(0, len(files), 0, sum(f.size for f in files))
     digests = hash_project(
         ctx.root,
         files,

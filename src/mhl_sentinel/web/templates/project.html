@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · MHL Sentinel{% endblock %}
+{% block content %}
+<div hx-ext="sse" sse-connect="/events">
+  <nav><ul><li><a href="/">← All projects</a></li></ul></nav>
+  {% include "_project_card.html" %}
+
+  <section>
+    <h3>Manifest history</h3>
+    {% if history.error %}
+    <p class="muted">{{ history.error|capitalize }}.</p>
+    {% elif history.generations %}
+    <div class="overflow-auto">
+    <table>
+      <thead><tr><th>Generation</th><th>Date</th><th>Files</th></tr></thead>
+      <tbody>
+        {% for g in history.generations %}
+        <tr><td>{{ g.number }}</td><td>{{ g.created }}</td><td>{{ g.files }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No manifest yet.</p>
+    {% endif %}
+    {% if last_scan %}<p><small class="muted">Last checked {{ last_scan }}</small></p>{% endif %}
+  </section>
+</div>
+{% endblock %}

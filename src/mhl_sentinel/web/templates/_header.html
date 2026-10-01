@@ -1,0 +1,20 @@
+<header id="status-header" class="status"
+        hx-get="/fragments/header" hx-swap="outerHTML"
+        hx-trigger="sse:cycle.finished, sse:job.started, sse:job.finished, sse:job.failed, sse:archive.unreachable, sse:archive.ok">
+  <p>
+    {% if archive_ok %}<span class="light green">●</span> Archive: <strong>OK</strong>
+    {% else %}<span class="light red">●</span> Archive: <strong>not reachable</strong>{% endif %}
+    {% if last_cycle %} · last round {{ last_cycle }}{% endif %}
+    {% if working_now %}
+      · working hours: the app stays idle{% if next_change %} until {{ next_change }}{% endif %}
+    {% else %}
+      · idle window open{% if next_change %} until {{ next_change }}{% endif %}
+    {% endif %}
+    <small class="muted">({{ timezone }})</small>
+  </p>
+  {% if job_text %}
+  <p>{{ job_text }}{% if job_pct is not none %} · {{ job_pct }}%{% endif %}
+    {% if working_now %}<small class="muted">(paused until the idle window)</small>{% endif %}</p>
+  {% endif %}
+  {% if notice %}<p><mark>{{ notice }}</mark></p>{% endif %}
+</header>

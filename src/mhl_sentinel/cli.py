@@ -6,8 +6,8 @@ jobs one after another, only outside working hours (D33) unless ``--ignore-worki
 
 from __future__ import annotations
 
+import asyncio
 import os
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -20,8 +20,11 @@ from mhl_sentinel import __version__, sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import Settings, load_settings
 from mhl_sentinel.db import Database, NetworkFilesystemError
+from mhl_sentinel.events import EventBus
 from mhl_sentinel.models import JobState, ProjectState
 from mhl_sentinel.schedule import WorkingHours
+from mhl_sentinel.settings_ref import SettingsRef
+from mhl_sentinel.supervisor import Supervisor, SupervisorStatus
 
 
 def _force_utc() -> None:
@@ -186,10 +189,41 @@ for _action, _help in (
 
 
 @main.command("serve")
-def serve() -> None:
-    """Web GUI and supervisor (hito 2)."""
-    click.echo("serve: not implemented yet (hito 2)", err=True)
-    sys.exit(2)
+@click.option("--host", default="0.0.0.0", show_default=True, help="Address to listen on.")
+@click.option("--once-tick", is_flag=True, hidden=True, help="Run one supervisor tick and exit.")
+def serve(host: str, once_tick: bool) -> None:
+    """Web GUI and supervisor in one process (hito 2). SIGTERM/SIGINT stop it cleanly."""
+    from mhl_sentinel.server import (  # lazy: uvicorn/FastAPI only for serve
+        attach_supervisor,
+        build_app,
+        configure_logging,
+        make_server,
+    )
+
+    _force_utc()
+    settings = load_settings()
+    configure_logging(os.environ.get("MHLS_LOG_LEVEL") or settings.log_level)
+    with _open_db(settings) as db:
+        settings_ref = SettingsRef(settings)
+        bus = EventBus(db)
+        supervisor = Supervisor(db, settings_ref, bus)
+        if once_tick:
+            status = asyncio.run(_one_tick(supervisor))
+            click.echo(
+                f"tick: working_now={status.working_now} gate_open={status.gate_open}"
+                f" archive_reachable={status.archive_reachable}"
+                f" queued_jobs={status.queued_jobs}"
+            )
+            return
+        app = attach_supervisor(build_app(db, settings_ref, supervisor, bus), supervisor)
+        make_server(app, settings, host=host).run()
+
+
+async def _one_tick(supervisor: Supervisor) -> SupervisorStatus:
+    supervisor.bus.bind(asyncio.get_running_loop())
+    sealer.recover_after_restart(supervisor.db)
+    await supervisor.tick()
+    return supervisor.status()
 
 
 if __name__ == "__main__":  # pragma: no cover

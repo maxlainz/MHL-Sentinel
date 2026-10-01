@@ -195,5 +195,4 @@ def test_other_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     cli("run-once")
     listing = cli("projects", "list")
     assert A in listing and "unsealed" in listing
-    result = CliRunner().invoke(main, ["serve"])
-    assert result.exit_code == 2
+    assert "tick: working_now=" in cli("serve", "--once-tick")

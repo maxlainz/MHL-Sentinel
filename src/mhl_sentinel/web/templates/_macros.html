@@ -1,0 +1,6 @@
+{% macro err(form, name) -%}
+{% if form.errors.get(name) %}<small class="field-error" data-error-for="{{ name }}">{{ form.errors[name] }}</small>{% endif %}
+{%- endmacro %}
+{% macro envnote(overrides, name) -%}
+{% if name in overrides %}<small class="muted">Also set by an environment variable, which wins after a restart.</small>{% endif %}
+{%- endmacro %}

@@ -1,0 +1,13 @@
+<div id="progress"
+     hx-get="/fragments/projects/{{ p.id }}/progress" hx-swap="outerHTML"
+     hx-trigger="sse:job.progress throttle:2s, sse:job.started, sse:job.finished, sse:job.failed">
+  {% if job %}
+    {% if job_running %}
+    <p>{{ job_label }} this project · {{ job.files_done }} of {{ job.files_total }} files
+      · {{ job.bytes_done|size }} of {{ job.bytes_total|size }}</p>
+    <progress value="{{ job_pct or 0 }}" max="100">{{ job_pct or 0 }}%</progress>
+    {% else %}
+    <p class="muted">{{ job_label }} this project: waiting for the next idle window.</p>
+    {% endif %}
+  {% endif %}
+</div>

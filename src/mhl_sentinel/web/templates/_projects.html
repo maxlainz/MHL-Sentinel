@@ -1,0 +1,25 @@
+<section id="projects"
+         hx-get="/fragments/projects" hx-swap="outerHTML"
+         hx-trigger="sse:project.state, sse:cycle.finished">
+  <p class="counters">
+    <span><strong>{{ counters.projects }}</strong> projects</span>
+    <span><strong>{{ counters.needs_review }}</strong> need review</span>
+    <span><strong>{{ counters.unsealed }}</strong> without manifest</span>
+    <span><strong>{{ counters.queued }}</strong> queued</span>
+    {% if counters.errors %}<span><strong>{{ counters.errors }}</strong> with problems</span>{% endif %}
+  </p>
+  {% if projects %}
+  <ul class="projects">
+    {% for p in projects %}
+    <li data-state="{{ p.state }}">
+      <span class="light {{ p.light }}" title="{{ p.label }}">●</span>
+      <span class="name">{{ p.name }}{% if p.folder %} <small class="muted">in {{ p.folder }}</small>{% endif %}</span>
+      <span class="text">{{ p.text }}</span>
+      <a href="/projects/{{ p.id }}">View</a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No projects found yet. The first round lists them.</p>
+  {% endif %}
+</section>

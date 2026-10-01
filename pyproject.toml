@@ -62,4 +62,5 @@ addopts = "-q"
 filterwarnings = [
   # ascmhl 1.2 usa 'gitwildmatch' (deprecado en pathspec); no es nuestro código
   "ignore:GitWildMatchPattern:DeprecationWarning",
+  "ignore::DeprecationWarning:starlette.testclient",
 ]

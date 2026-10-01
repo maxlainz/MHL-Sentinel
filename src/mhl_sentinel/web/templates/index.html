@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<div hx-ext="sse" sse-connect="/events">
+  <hgroup>
+    <h1>MHL Sentinel</h1>
+    <p>Manifests for the finished projects of the archive</p>
+  </hgroup>
+  {% include "_header.html" %}
+  <div class="actions">
+    <button hx-post="/scan-now" hx-target="#status-header" hx-swap="outerHTML">Run scan now</button>
+    <a href="/settings" role="button" class="secondary">Settings</a>
+  </div>
+  {% include "_projects.html" %}
+  {% if strays %}
+  <details>
+    <summary>{{ strays|length + strays_more }} item(s) out of place in the archive</summary>
+    <p class="muted">These files are at the root or in a container folder, where only folders are
+      expected. The app does not watch them: move them into a project.</p>
+    <ul>
+      {% for s in strays %}<li class="path">{{ s }}</li>{% endfor %}
+      {% if strays_more %}<li class="muted">and {{ strays_more }} more</li>{% endif %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% endblock %}
