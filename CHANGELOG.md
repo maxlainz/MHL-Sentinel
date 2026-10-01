@@ -3,6 +3,9 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- Hito 2, daemon: `events.py` (bus entre hilos hacia SSE), `settings_ref.py`, `supervisor.py` (bucle asyncio + hilo hasher con puerta por horario laboral, D33; `Run scan now` en cualquier momento, D26; recuperación de trabajos al arrancar), `server.py` (uvicorn con SIGTERM limpio: termina el bloque, reencola y sale con 0), `mhl-sentinel serve`. Imagen `v0.1.0` publicada en GHCR por `release.yml` (amd64 + arm64) como prueba del pipeline.
+- Hito 3, GUI: `web/` (FastAPI + Jinja2 + HTMX + SSE + Pico.css) con la pantalla única (D11), detalle de revisión (D46), Ajustes (D45) con guardado a YAML y recarga en caliente, `/healthz`, `/api/status`, `/api/projects`, `/events`. Probado de extremo a extremo sobre los fixtures: `Seal` desde la GUI → trabajo → manifiesto aceptado por `ascmhl-debug verify`.
 
 ## [0.1.0] - 2026-10-01 — Hito 1: núcleo sin GUI
 ### Añadido

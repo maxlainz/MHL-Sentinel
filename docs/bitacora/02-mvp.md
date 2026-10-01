@@ -9,5 +9,12 @@
 - Reproducción manual del ciclo completo: ver docstring de `tests/test_e2e_run_once.py` o la secuencia `run-once` del informe (en la bitácora al cerrar el MVP).
 - Vault: sin conceptos nuevos (H13 es un detalle de implementación de la referencia; se añade como limitación en `MHL (Media Hash List)` al cerrar el MVP).
 
+## Hitos 2 y 3 — Daemon, Docker y GUI (`v0.3.0`; el hito 2 no cortó tag propio porque ambos llegaron a la vez)
+- Hito 2 (Opus): `events`, `settings_ref`, `supervisor`, `server`, `serve`. 15 tests nuevos, incluido uno que lanza `serve` como subproceso, espera `/healthz`, envía SIGTERM y comprueba salida 0 con el trabajo reencolado y sin `ascmhl/` a medias.
+- Hito 3 (Opus): `web/` con todas las rutas del contrato; 17 tests. Cableado por el orquestador: `notify_job_queued` tras `Seal`/`Accept`; recarga de ajustes con precedencia real conservando los campos solo-env (fallo detectado porque el gate se saltó por un `tail` que enmascaró el código de salida: un commit rojo en `main`, corregido en el siguiente; desde entonces el gate corre con `pipefail`).
+- Prueba real en local sobre los fixtures (puerto 8089): `/healthz` 200, 5 proyectos, `Seal` por HTMX → `queued` → `sealed` con generación 1 en ~10 s, `ascmhl-debug verify` exit 0, Ajustes guarda `config.yaml` y el supervisor pasa a «working now» al cambiar a Europe/Madrid, SIGTERM cierra limpio.
+- `release.yml` construyó y publicó `ghcr.io/maxlainz/mhl-sentinel:0.1.0` (amd64 + arm64) al primer intento. El paquete nace privado: hacerlo público es acción del owner (el token de `gh` local no tiene `read:packages`).
+- Desvíos de contrato de ambos hitos registrados en `docs/arquitectura.md`.
+
 ## Siguiente paso
-Hito 2 (`v0.2.0`): `events.py`, `supervisor.py`, `serve`, SIGTERM, imagen en GHCR. En paralelo, hito 3 (GUI) contra el contrato.
+Hito 4 (`v0.4.0`): `rootmanifest.py`, trabajo `verify` escalonado (90 días), resultados en la GUI.
