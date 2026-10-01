@@ -36,3 +36,37 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+  smoke:
+    # Prueba de humo del contenedor publicado (amd64): arranca sobre un archivo sintético y responde en /healthz.
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen && uv run python scripts/make_fixtures.py
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: run container and probe
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME#v}"
+          image="ghcr.io/${{ github.repository_owner }}/mhl-sentinel:${tag}"
+          mkdir -p "$PWD/config"
+          docker run -d --name sentinel -p 8080:8080 \
+            -e PUID="$(id -u)" -e PGID="$(id -g)" -e MHLS_WORKING_HOURS__DAYS='[]' \
+            -v "$PWD/tests/fixtures/archive:/archive" -v "$PWD/config:/config" "$image"
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/healthz; then ok=1; break; fi; sleep 2
+          done
+          echo; [ "${ok:-0}" = 1 ] || { docker logs sentinel; exit 1; }
+          curl -fsS http://127.0.0.1:8080/api/status | tee status.json
+          python3 -c "import json;d=json.load(open('status.json'));assert d['counters']['projects']>=4,d;print('projects',d['counters']['projects'])"
+          docker stop -t 30 sentinel
+          docker logs sentinel | tail -20
