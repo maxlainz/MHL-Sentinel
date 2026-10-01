@@ -63,6 +63,7 @@ settle_hours: 168                 # D31
 verify_interval_days: 90          # D23
 scan_interval_minutes: 60
 log_level: info
+theme: auto                       # D56: auto (sigue al sistema) | light | dark; Ajustes → Appearance
 hash_format: xxh128               # D30, no editable en GUI
 config_dir: /config               # config.yaml + state.db; solo env
 port: 8080                        # solo env

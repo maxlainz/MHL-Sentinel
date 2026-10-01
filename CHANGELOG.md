@@ -3,6 +3,9 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- Ajuste de tema en Ajustes → *Appearance*: `Auto (follow the system)`, `Light` o `Dark` (D56). Campo `theme` en `config.yaml` (env `MHLS_THEME`), `auto` por defecto.
+
 ### Cambiado
 - GUI nueva «Bandeja», la propuesta D elegida por el owner (D54, #5): pantalla principal como bandeja (frase de estado · decidir · sin sellar · en marcha · todo lo demás plegado), `Seal` y `Cancel` de un clic en la bandeja (`?from=inbox`), log de actividad (`GET /fragments/activity`), detalle con frase de estado e historial en línea de tiempo. Acabado claro y cálido, contenedor de hasta 1440 px, modo oscuro solo si el sistema lo pide, textos con contraste AA. Hoja y JS propios; se retira Pico.css. Documento en `docs/propuestas/frontend-D.md`.
 
@@ -11,6 +14,7 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ### Decidido
 - D55: `main` protegida en GitHub; todo cambio entra por PR con CI verde, releases incluidas. Norma `rama-main-protegida.md`.
+- D56: el tema de la GUI se configura en Ajustes (auto / light / dark, auto por defecto) y vale para todos los navegadores del owner.
 
 ## [0.4.3] - 2026-10-01 — patch: Cancel
 ### Añadido

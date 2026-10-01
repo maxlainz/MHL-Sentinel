@@ -361,6 +361,7 @@ def _settings_page(request: Request, state: settings_form.FormState, code: int =
         "s": settings,
         "days": settings_form.DAY_LABELS,
         "log_levels": settings_form.LOG_LEVELS,
+        "themes": settings_form.THEMES,
         "env_overrides": settings_form.env_overrides(),
     }
     return templates.TemplateResponse(request, "settings.html", context, status_code=code)

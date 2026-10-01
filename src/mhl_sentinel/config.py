@@ -39,6 +39,7 @@ YAML_FIELDS: tuple[str, ...] = (
     "scan_interval_minutes",
     "log_level",
     "timezone",
+    "theme",
     "hash_format",
 )
 
@@ -116,6 +117,7 @@ class Settings(BaseSettings):
     verify_interval_days: int = Field(default=90, ge=1)  # D23
     scan_interval_minutes: int = Field(default=60, ge=1)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
+    theme: Literal["auto", "light", "dark"] = "auto"  # D56: GUI theme; auto follows the system
     hash_format: Literal["xxh128"] = "xxh128"  # D30, not editable in the GUI
     # IANA zone of the working hours. Not env TZ: the process always runs with TZ=UTC
     # because ascmhl writes dates with the current offset.

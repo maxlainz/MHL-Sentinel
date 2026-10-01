@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+{%- set theme = request.app.state.ctx.settings.theme -%}
+<html lang="en"{% if theme in ("light", "dark") %} data-theme="{{ theme }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="{% if theme in ('light', 'dark') %}{{ theme }}{% else %}light dark{% endif %}">
   <title>{% block title %}MHL Sentinel{% endblock %}</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%232c8a57'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/sentinel.css">

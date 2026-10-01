@@ -432,6 +432,30 @@ def test_settings_warns_when_excluded_types_shrink(env: Env) -> None:
     assert "stay excluded" in r.text and env.ref.value.exclude_globs == []
 
 
+def test_theme_defaults_to_auto(env: Env) -> None:
+    assert env.ref.value.theme == "auto"
+    page = env.client.get("/").text
+    assert "data-theme=" not in page and 'content="light dark"' in page
+    settings = env.client.get("/settings").text
+    assert re.search(r'name="theme" value="auto"\s+checked', settings)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_theme_setting_is_saved_and_applied(env: Env, theme: str) -> None:
+    r = env.client.post("/settings", data=_form(theme=theme))
+    assert r.status_code == 200 and "Saved." in r.text
+    assert f'data-theme="{theme}"' in r.text  # the reloaded page already uses it
+    assert yaml.safe_load(env.ref.value.config_file.read_text())["theme"] == theme
+    for path in ("/", f"/projects/{env.ids['sealed']}", "/settings"):
+        assert f'<html lang="en" data-theme="{theme}">' in env.client.get(path).text
+
+
+def test_theme_rejects_unknown_values(env: Env) -> None:
+    r = env.client.post("/settings", data=_form(theme="purple"))
+    assert r.status_code == 422 and 'data-error-for="theme"' in r.text
+    assert env.ref.replaced == 0 and env.ref.value.theme == "auto"
+
+
 def test_healthz(env: Env) -> None:
     r = env.client.get("/healthz")
     assert r.status_code == 200

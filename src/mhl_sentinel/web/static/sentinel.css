@@ -2,7 +2,7 @@
    Light by default: warm paper neutrals, quiet type, hierarchy by size and space rather than
    weight. Colour only ever means something:
    red = needs your decision, amber = waiting / moving, green = sealed (a small dot, never a fill).
-   Dark follows the system (prefers-color-scheme): soft graphite, not black. */
+   Dark (soft graphite, not black) follows the system unless Settings forces a theme (D56). */
 
 :root {
   --bg: #f7f6f3;
@@ -33,11 +33,14 @@
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto,
           "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
+/* Theme (D56): Settings → Appearance. "auto" leaves <html> bare and follows the system;
+   "light" / "dark" set data-theme. The dark tokens are repeated in both blocks on purpose:
+   one is the system's choice (unless forced light), the other is the forced dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1f2023;
     --surface: #26272b;
     --sunken: #2c2d31;
@@ -60,7 +63,34 @@
     --primary: #e7e5e0;
     --primary-ink: #1f2023;
     --shadow: none;
+    color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1f2023;
+  --surface: #26272b;
+  --sunken: #2c2d31;
+  --ink: #e7e5e0;
+  --ink-2: #b3b0a9;
+  --ink-3: #9a978f;
+  --ink-4: #78766f;
+  --line: #34353a;
+  --line-strong: #43444a;
+  --red: #f07a70;
+  --red-soft: #3a2a29;
+  --on-red: #1f2023;
+  --amber: #dcaa5a;
+  --amber-soft: #352e22;
+  --amber-ink: #dcaa5a;
+  --green: #74c294;
+  --green-ink: #74c294;
+  --grey: var(--ink-4);
+  --focus: #84a9f0;
+  --primary: #e7e5e0;
+  --primary-ink: #1f2023;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }

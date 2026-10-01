@@ -90,6 +90,21 @@
     </label>
   </section>
 
+  <section class="card">
+    <h2>Appearance</h2>
+    <div class="field">
+      <span class="name">Theme</span>
+      <fieldset class="days" aria-label="Theme">
+      {% for value, label in themes %}
+        <label class="chip"><input type="radio" name="theme" value="{{ value }}"
+               {% if value == form.values.theme %}checked{% endif %}><span>{{ label }}</span></label>
+      {% endfor %}
+      </fieldset>
+      <small>Auto follows the light or dark setting of each computer or phone.</small>
+      {{ err(form, "theme") }}{{ envnote(env_overrides, "theme") }}
+    </div>
+  </section>
+
   <details class="advanced card" {% if form.errors.scan_interval_minutes or form.errors.log_level %}open{% endif %}>
     <summary>Advanced</summary>
     <label class="field"><span class="name">Hash algorithm</span>
