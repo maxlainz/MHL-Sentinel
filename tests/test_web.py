@@ -10,7 +10,7 @@ import asyncio
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
-from mhl_sentinel.web import create_app
+from mhl_sentinel.web import create_app, views
 from mhl_sentinel.web.routes import event_stream
 
 NOW = datetime(2026, 10, 1, 22, 0, tzinfo=UTC)
@@ -494,3 +494,135 @@ def test_detail_reads_generations_from_the_history(env: Env) -> None:
     (project / "ascmhl" / "ascmhl_chain.xml").write_text("broken")
     r = env.client.get(f"/projects/{env.ids['sealed']}")
     assert r.status_code == 200 and "could not be read" in r.text
+
+
+# --- inbox (proposal D, D54) ---------------------------------------------------------------
+
+
+def _headline(env: Env, archive_ok: bool = True) -> views.Headline:
+    return views.headline(env.db.list_projects(), archive_ok)
+
+
+def test_headline_tones_follow_every_state(env: Env) -> None:
+    ids, db = env.ids, env.db
+    assert _headline(env) == views.Headline("alert", "1 project needs your decision.")
+    assert _headline(env, archive_ok=False).text == "The archive is not reachable."
+    db.set_state(ids["needs_review"], ProjectState.SEALED)
+    assert _headline(env) == views.Headline("wait", "1 project is not sealed yet.")
+    db.set_state(ids["unsealed"], ProjectState.QUEUED)  # a Seal was pressed
+    assert _headline(env) == views.Headline("wait", "1 project is being sealed.")
+    header = env.client.get("/fragments/header").text
+    assert "being sealed" in header and "Every project is sealed" not in header
+    db.set_state(ids["unsealed"], ProjectState.HASHING)
+    assert _headline(env).text == "1 project is being sealed."
+    db.set_state(ids["unsealed"], ProjectState.CHANGED)
+    assert _headline(env) == views.Headline("wait", "1 project has new files waiting to be added.")
+    db.set_state(ids["unsealed"], ProjectState.SEALED)
+    assert _headline(env) == views.Headline("calm", "All quiet. Every project is sealed.")
+    assert ", all quiet" in env.client.get("/fragments/projects").text
+    for key in ("sealed", "needs_review", "unsealed"):
+        db.set_state(ids[key], ProjectState.IGNORED)
+    assert _headline(env).text == "Every project is ignored."
+    inbox = env.client.get("/fragments/projects").text
+    assert "Every project is ignored." in inbox and "all quiet" not in inbox
+    assert views.headline([], True).text == "No projects found yet."
+
+
+def test_next_verification_estimate_and_overdue(env: Env) -> None:
+    settings = env.ref.value
+    projects = env.db.list_projects()  # sealed and verified at NOW (22:00 UTC, next day in Madrid)
+    assert views.next_verification(projects, settings, NOW) == "2026-12-30"
+    later = NOW + timedelta(days=120)
+    assert views.next_verification(projects, settings, later) == views.OVERDUE
+    unsealed_only = [p for p in projects if p.state is not ProjectState.SEALED]
+    assert views.next_verification(unsealed_only, settings, NOW) == ""
+    assert "Next periodic verification due around 2026-12-30" in env.client.get("/").text
+
+
+def test_overdue_verification_wording(env: Env) -> None:
+    env.db.update_project_fields(
+        env.ids["sealed"], last_verified_at=NOW - timedelta(days=400), last_sealed_at=None
+    )
+    assert "Some periodic verifications are overdue" in env.client.get("/fragments/projects").text
+
+
+def test_activity_marks_reviews_and_orders_by_finish(env: Env) -> None:
+    db, sealed, unsealed = env.db, env.ids["sealed"], env.ids["unsealed"]
+    verify = db.enqueue_job(JobKind.VERIFY, sealed, Trigger.AUTO, 10, NOW)
+    db.replace_verify_results(
+        verify, sealed, [VerifyResult("01_MASTERS/a.mov", "aa", "cc", "corrupt")]
+    )
+    db.set_job_state(verify, JobState.DONE, NOW + timedelta(minutes=30))
+    seal = db.enqueue_job(JobKind.SEAL, unsealed, Trigger.MANUAL, 130, NOW)
+    db.set_job_state(seal, JobState.DONE, NOW + timedelta(minutes=10))
+    db.log(seal, "warning", "needs review, nothing written: 1 modified since the seal", NOW)
+    cancelled = db.enqueue_job(JobKind.SEAL, unsealed, Trigger.MANUAL, 130, NOW)
+    db.set_job_state(cancelled, JobState.CANCELLED, NOW + timedelta(minutes=5))
+    ok = db.enqueue_job(JobKind.ROOT_MANIFEST, None, Trigger.AUTO, 5, NOW)
+    db.set_job_state(ok, JobState.DONE, NOW + timedelta(minutes=20))
+    past = views.activity(db, env.ref.value.tzinfo, NOW, None).past
+    assert [(r.tone, r.text) for r in past] == [
+        ("review", "Verification found problems in 2025-01_CLIENTE-SELLADO"),
+        ("done", "Updated the archive manifest"),
+        ("review", "2025-03_CLIENTE-NUEVO needs your decision"),
+        ("cancelled", "Cancelled: Seal 2025-03_CLIENTE-NUEVO"),
+    ]  # by finish time, not by id
+    assert past[0].detail == "1 corrupt"
+    assert past[2].detail == "nothing was written: 1 modified since the seal"
+    html = env.client.get("/fragments/activity").text
+    assert '<li class="review">' in html and "Sealed 2025-03" not in html
+
+
+def test_inbox_folds_long_lists_and_orders_moving(env: Env) -> None:
+    db = env.db
+    for i in range(7):
+        pid = db.upsert_project(f"2025/2025-09_CLIENTE-X{i}", f"2025-09_CLIENTE-X{i}", True, NOW)
+        db.set_state(pid, ProjectState.UNSEALED)
+    html = env.client.get("/fragments/projects").text
+    assert "Show 2 more not sealed" in html  # 8 unsealed, 6 shown
+    queued = db.upsert_project("2025/2025-10_A-QUEUED", "2025-10_A-QUEUED", True, NOW)
+    db.set_state(queued, ProjectState.QUEUED)
+    hashing = db.upsert_project("2025/2025-11_Z-HASHING", "2025-11_Z-HASHING", True, NOW)
+    db.set_state(hashing, ProjectState.HASHING)
+    box = views.inbox(db, db.list_projects(), env.ref.value, None, NOW)
+    assert [r.view.state for r in box.moving] == ["hashing", "queued"]
+    for p in db.list_projects()[:9]:  # one queued job per project
+        db.enqueue_job(JobKind.VERIFY, p.id, Trigger.AUTO, 10, NOW)
+    upcoming = views.activity(db, env.ref.value.tzinfo, NOW, None).upcoming
+    assert len(upcoming) == 9 and upcoming[-1].text == "and 1 more"
+
+
+def test_detail_sentence_per_state(env: Env) -> None:
+    db, settings = env.db, env.ref.value
+
+    def sentence(key: str) -> str:
+        project = db.get_project(env.ids[key])
+        assert project is not None
+        return views.detail_sentence(db, project, settings)
+
+    assert sentence("sealed") == (
+        "Sealed on 2026-10-02. Nothing has changed since. Last verified on 2026-10-02."
+    )
+    assert sentence("needs_review").startswith("Files changed since the last seal (1 modified,")
+    assert sentence("unsealed").startswith("No manifest yet. Press Seal")
+    assert sentence("ignored") == "Ignored. The app leaves this folder alone."
+    pid = env.ids["unsealed"]
+    expected = {
+        ProjectState.QUEUED: "Queued. The app works on it after working hours.",
+        ProjectState.HASHING: "Reading every file to write the manifest.",
+    }
+    for state, text in expected.items():
+        db.set_state(pid, state)
+        assert sentence("unsealed") == text
+    db.set_state(pid, ProjectState.CHANGED)
+    assert sentence("unsealed").startswith("New files were added since the last seal")
+    db.set_state(pid, ProjectState.ERROR)
+    db.update_project_fields(pid, error="share went away")
+    assert sentence("unsealed") == (
+        "Something went wrong: share went away. The app retries next round."
+    )
+
+
+def test_project_card_refreshes_on_job_events(env: Env) -> None:
+    card = env.client.get(f"/fragments/projects/{env.ids['unsealed']}").text
+    assert "sse:job.started" in card and "sse:job.finished" in card

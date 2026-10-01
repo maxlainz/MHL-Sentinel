@@ -7,7 +7,7 @@
 {%- endmacro %}
 <article id="project-card"
          hx-get="/fragments/projects/{{ p.id }}" hx-swap="outerHTML"
-         hx-trigger="sse:project.state">
+         hx-trigger="sse:project.state, sse:job.started, sse:job.finished, sse:job.failed">
   <header class="project-head">
     {% if view.folder %}<p class="where">in {{ view.folder }}</p>{% endif %}
     <h1>{{ p.name }}</h1>

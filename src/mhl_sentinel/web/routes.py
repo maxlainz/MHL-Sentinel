@@ -128,9 +128,10 @@ def header_context(ctx: WebContext) -> dict[str, Any]:
         if project is not None:
             job_text += " " + project.name
         job_pct = views.percent(fresh)
-    counters = views.counters(ctx.db.list_projects(), status.queued_jobs)
+    projects = ctx.db.list_projects()
+    counters = views.counters(projects, status.queued_jobs)
     return {
-        "headline": views.headline(counters, status.archive_reachable),
+        "headline": views.headline(projects, status.archive_reachable),
         "counters": counters,
         "archive_ok": status.archive_reachable,
         "working_now": status.working_now,
@@ -150,7 +151,7 @@ def projects_context(ctx: WebContext) -> dict[str, Any]:
     status = ctx.supervisor.status()
     projects = ctx.db.list_projects()
     return {
-        "inbox": views.inbox(ctx.db, projects, settings, status.current_job),
+        "inbox": views.inbox(ctx.db, projects, settings, status.current_job, utcnow()),
         "preview": views.INBOX_PREVIEW,
         "counters": views.counters(projects, status.queued_jobs),
         "archive_ok": status.archive_reachable,

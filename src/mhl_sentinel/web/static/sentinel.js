@@ -31,12 +31,16 @@
   // Live refreshes (SSE) replace whole fragments: keep folded sections open and the filter text.
   var openIds = [];
   var filterText = {};
+  var focus = null; // {id, start, end} of a focused text field about to be replaced
   document.addEventListener("htmx:beforeSwap", function () {
     openIds = Array.prototype.map.call(document.querySelectorAll("details[id][open]"),
       function (d) { return d.id; });
     document.querySelectorAll("[data-filter]").forEach(function (i) {
       filterText[i.dataset.filter] = i.value;
     });
+    var a = document.activeElement;
+    focus = a && a.id && a.matches("input") ?
+      { id: a.id, start: a.selectionStart, end: a.selectionEnd } : null;
   });
 
   function restore(root) {
@@ -51,6 +55,15 @@
         i.dispatchEvent(new Event("input"));
       }
     });
+    // A live refresh must not steal the cursor from someone typing in the filter.
+    if (focus) {
+      var el = document.getElementById(focus.id);
+      if (el && el !== document.activeElement) {
+        el.focus({ preventScroll: true });
+        try { el.setSelectionRange(focus.start, focus.end); } catch (err) { /* type=search */ }
+      }
+      focus = null;
+    }
   }
 
   document.addEventListener("DOMContentLoaded", function () { wireFilters(document); });

@@ -85,15 +85,21 @@
       <p class="big">No projects found yet.</p>
       <p>The first round lists them.</p>
       {% else %}
+      {% if counters.projects == 0 %}
+      <p class="big"><span class="light grey" aria-hidden="true"></span>
+        <span>Every project is ignored.</span></p>
+      <p>{{ inbox.ignored|length }} ignored. Open one to watch it again.</p>
+      {% else %}
       <p class="big"><span class="light green" aria-hidden="true"></span>
-        <span><strong>{{ inbox.quiet|length }}</strong> sealed{% if not inbox.decide and not inbox.unsealed and not inbox.moving %}, all quiet{% endif %}</span></p>
+        <span><strong>{{ inbox.quiet|length }}</strong> sealed{% if inbox.quiet and inbox.quiet|length == counters.projects %}, all quiet{% endif %}</span></p>
       <p>
-        {% if inbox.next_verification %}Next periodic verification due around {{ inbox.next_verification }}.{% else %}Verification starts once a project is sealed.{% endif %}
+        {% if inbox.next_verification == "overdue" %}Some periodic verifications are overdue: the app verifies a few projects per night until it catches up.{% elif inbox.next_verification %}Next periodic verification due around {{ inbox.next_verification }}.{% else %}Verification starts once a project is sealed.{% endif %}
         {{ counters.projects }} project{{ '' if counters.projects == 1 else 's' }} watched{% if inbox.ignored %}, {{ inbox.ignored|length }} ignored{% endif %}.
       </p>
+      {% endif %}
       <details class="fold" id="fold-all">
         <summary>All projects</summary>
-        <input class="filter" type="search" placeholder="Filter by name" aria-label="Filter projects"
+        <input class="filter" id="filter-all" type="search" placeholder="Filter by name" aria-label="Filter projects"
                data-filter="all-projects" hidden>
         <ul class="rows" id="all-projects">
           {% for group in (inbox.decide, inbox.unsealed, inbox.moving, inbox.quiet, inbox.ignored) %}

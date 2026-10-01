@@ -407,7 +407,12 @@ def _meta(project: ProjectRow) -> str:
     return " · ".join(parts)
 
 
-def next_verification(projects: list[ProjectRow], settings: Settings) -> str:
+OVERDUE = "overdue"
+
+
+def next_verification(
+    projects: list[ProjectRow], settings: Settings, now: datetime | None = None
+) -> str:
     """Earliest date a sealed project is due for its periodic re-read (D23): the oldest
     ``last_verified_at`` (else ``last_sealed_at``) plus the interval. An estimate: the scheduler
     staggers verifications over the nights, so one may run a little later."""
@@ -420,13 +425,23 @@ def next_verification(projects: list[ProjectRow], settings: Settings) -> str:
     if not dates:
         return ""
     due = min(dates) + timedelta(days=settings.verify_interval_days)
+    if (
+        now is not None
+        and due.astimezone(settings.tzinfo).date() < now.astimezone(settings.tzinfo).date()
+    ):
+        # D23 staggers a few projects per night: a backlog can leave the oldest one overdue.
+        return OVERDUE
     return fmt_date(due, settings.tzinfo)
 
 
 def inbox(
-    db: Database, projects: list[ProjectRow], settings: Settings, current: JobRow | None
+    db: Database,
+    projects: list[ProjectRow],
+    settings: Settings,
+    current: JobRow | None,
+    now: datetime | None = None,
 ) -> Inbox:
-    box = Inbox(next_verification=next_verification(projects, settings))
+    box = Inbox(next_verification=next_verification(projects, settings, now))
     tz = settings.tzinfo
     for p in sorted_projects(projects):
         row = InboxRow(project_view(db, p, settings, current), _meta(p))
@@ -490,27 +505,40 @@ class Headline:
     text: str
 
 
-def headline(c: Counters, archive_ok: bool) -> Headline:
-    """The one sentence at the top of the main screen."""
+def _n(count: int, one: str, many: str) -> str:
+    return f"1 {one}" if count == 1 else f"{count} {many}"
+
+
+def headline(projects: list[ProjectRow], archive_ok: bool) -> Headline:
+    """The one sentence at the top of the main screen. "Every project is sealed" only when
+    every watched project really is ``sealed``; anything moving keeps the amber tone."""
     if not archive_ok:
         return Headline("alert", "The archive is not reachable.")
-    decide = c.needs_review + c.errors
+    states = Counter(p.state for p in projects)
+    decide = states[ProjectState.NEEDS_REVIEW] + states[ProjectState.ERROR]
     if decide:
-        noun = "1 project needs" if decide == 1 else f"{decide} projects need"
-        return Headline("alert", f"{noun} your decision.")
-    if c.unsealed:
-        noun = "1 project is" if c.unsealed == 1 else f"{c.unsealed} projects are"
-        return Headline("wait", f"{noun} not sealed yet.")
-    if c.projects == 0:
-        return Headline("calm", "No projects found yet.")
-    return Headline("calm", "All quiet. Every project is sealed.")
+        return Headline("alert", _n(decide, "project needs", "projects need") + " your decision.")
+    if states[ProjectState.UNSEALED]:
+        text = _n(states[ProjectState.UNSEALED], "project is", "projects are") + " not sealed yet."
+        return Headline("wait", text)
+    sealing = states[ProjectState.QUEUED] + states[ProjectState.HASHING]
+    if sealing:
+        return Headline("wait", _n(sealing, "project is", "projects are") + " being sealed.")
+    if states[ProjectState.CHANGED]:
+        text = _n(states[ProjectState.CHANGED], "project has", "projects have")
+        return Headline("wait", text + " new files waiting to be added.")
+    if states[ProjectState.SEALED]:
+        return Headline("calm", "All quiet. Every project is sealed.")
+    if states[ProjectState.IGNORED]:
+        return Headline("calm", "Every project is ignored.")
+    return Headline("calm", "No projects found yet.")
 
 
 @dataclass(slots=True)
 class ActivityRow:
     when: str
     text: str
-    tone: str  # running, queued, done, failed, cancelled
+    tone: str  # running, queued, done, review, failed, cancelled
     project_id: int | None = None
     detail: str = ""
     pct: int | None = None
@@ -545,6 +573,27 @@ _QUEUED_LABEL: dict[JobKind, str] = {
 }
 
 
+_REVIEW_LOG_PREFIX = "needs review, nothing written: "  # sealer._to_review
+
+
+def _went_to_review(db: Database, job: JobRow) -> str:
+    """A job that sent its project to review still ends ``done`` (``sealer._to_review``): the
+    reason is in its log, and a verification also leaves its problem rows. Empty if it went
+    well."""
+    for entry in db.get_job_log(job.id):
+        if entry.msg.startswith(_REVIEW_LOG_PREFIX):
+            return entry.msg.removeprefix(_REVIEW_LOG_PREFIX)
+    if job.kind is JobKind.VERIFY and job.project_id is not None:
+        problems = Counter(
+            r.status
+            for r in db.get_verify_results(job.project_id, job.id)
+            if r.status in sealer.VERIFY_PROBLEMS
+        )
+        if problems:
+            return ", ".join(f"{n} {status}" for status, n in sorted(problems.items()))
+    return ""
+
+
 def activity(
     db: Database, tz: ZoneInfo, now: datetime, current: JobRow | None, limit: int = 8
 ) -> Activity:
@@ -564,6 +613,7 @@ def activity(
         fresh = db.get_job(current.id) or current
         jobs = [fresh, *(j for j in jobs if j.id != fresh.id)]
     queued: list[JobRow] = []
+    finished: list[JobRow] = []
     for job in jobs:
         if job.state is JobState.RUNNING:
             if any(r.tone == "running" for r in out.upcoming):
@@ -579,20 +629,36 @@ def activity(
             )
         elif job.state is JobState.QUEUED:
             queued.append(job)
-        elif len(out.past) < limit and job.finished_at:
-            when = fmt_when(job.finished_at, tz, now)
-            if job.state is JobState.DONE:
+        elif job.finished_at:
+            finished.append(job)
+    # Jobs run by priority, not by id: "Earlier" is ordered by when they finished.
+    finished.sort(
+        key=lambda j: _as_utc(j.finished_at) or datetime.min.replace(tzinfo=UTC), reverse=True
+    )
+    for job in finished[:limit]:
+        when = fmt_when(job.finished_at, tz, now)
+        if job.state is JobState.DONE:
+            review = _went_to_review(db, job)
+            if review and job.kind is JobKind.VERIFY:
+                text = "Verification found problems in " + names.get(job.project_id or -1, "")
+                found = review.removeprefix(VERIFICATION_PREFIX).strip()
+                out.past.append(ActivityRow(when, text.strip(), "review", job.project_id, found))
+            elif review:
+                name = names.get(job.project_id or -1, "A project")
+                text, detail = f"{name} needs your decision", "nothing was written: " + review
+                out.past.append(ActivityRow(when, text, "review", job.project_id, detail))
+            else:
                 detail = ""
                 if job.files_total:
                     detail = f"{job.files_total} files · {human_size(job.bytes_total)}"
                 text = label(_DONE_LABEL, job)
                 out.past.append(ActivityRow(when, text, "done", job.project_id, detail))
-            elif job.state is JobState.FAILED:
-                text = label(_FAILED_LABEL, job)
-                out.past.append(ActivityRow(when, text, "failed", job.project_id, job.error or ""))
-            else:
-                text = "Cancelled: " + label(_QUEUED_LABEL, job)
-                out.past.append(ActivityRow(when, text, "cancelled", job.project_id))
+        elif job.state is JobState.FAILED:
+            text = label(_FAILED_LABEL, job)
+            out.past.append(ActivityRow(when, text, "failed", job.project_id, job.error or ""))
+        else:
+            text = "Cancelled: " + label(_QUEUED_LABEL, job)
+            out.past.append(ActivityRow(when, text, "cancelled", job.project_id))
     queued.sort(key=lambda j: (-j.priority, j.id))
     for job in queued[:limit]:
         text = label(_QUEUED_LABEL, job)
