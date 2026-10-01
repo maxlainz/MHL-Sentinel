@@ -43,7 +43,7 @@ services:
 docker compose up -d
 # luego http://<host>:8080 → Settings (niveles, horario laboral) → Seal en un proyecto pequeño
 ```
-Guía para QNAP Container Station y variables en `deploy/README.md` y `.env.example`.
+El tag `latest` sigue siempre a la última release: el contenedor puede actualizarse solo con Watchtower o con `docker compose pull && docker compose up -d` (servicio Watchtower opcional en `deploy/docker-compose.yml`). La app está hecha para que la recreen sin avisar: nunca deja una generación a medias y retoma el trabajo donde iba. Guía para QNAP Container Station, auto-actualización y variables en `deploy/README.md` y `.env.example`.
 
 ## Desarrollo
 `make setup` · `make fixtures` · `make run` (GUI en http://localhost:8080 sobre el archivo sintético) · `make ci`.

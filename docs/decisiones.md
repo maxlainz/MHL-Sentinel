@@ -279,6 +279,11 @@ Sealing
 - **Elección**: en ese caso la raíz aparta su historial a `<raíz>/ascmhl_superseded/<fecha>/` y empieza de nuevo en 0001. La raíz referencia todo proyecto con historial (incluidos los que están en revisión o con añadidos), no solo los `sealed`, para no regenerarla en cada cambio de estado; se regenera cuando cambia el conjunto referenciado o cualquier generación hija. Lleva patrones de ignore `_*`, `@*`, `\#*`, `.*` (H15: la referencia compara con rutas absolutas, `/_*` no casa nunca). Un fichero suelto entre proyectos hace que `verify` sobre la raíz dé exit 21 (H16): consecuencia de D49, el archivo debe estar ordenado.
 - 2026-10-01, hito 4.
 
+## D52 — Auto-actualización con Watchtower: tag `latest` siempre y contenedor recreable a lo bruto
+- **Contexto**: el owner quiere que el contenedor se actualice solo (Watchtower o equivalente): esas herramientas descargan `latest`, paran el contenedor con SIGTERM y un timeout corto (10 s por defecto), lo matan con SIGKILL si no sale, y lo recrean. `/config` persiste; `/archive` es compartido.
+- **Elección**: (1) cada release mueve `latest` (norma `ci.md`); (2) la app es segura ante SIGKILL en cualquier punto: generaciones en temporal + rename, trabajos reencolados al arrancar, manifiestos huérfanos y temporales limpiados antes de arrancar el supervisor, `stop()` por debajo de 10 s; demostrado por `tests/test_recreate.py`; (3) `deploy/docker-compose.yml` lleva las etiquetas de Watchtower y `stop_grace_period`, y la guía documenta `WATCHTOWER_TIMEOUT`; (4) las migraciones de la DB avanzan solas al arrancar y nunca se baja de versión.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista

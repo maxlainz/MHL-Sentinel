@@ -25,6 +25,9 @@
 - **H18** — La imagen `0.4.0` publicada no arrancaba: `ModuleNotFoundError: mhl_sentinel`. `uv sync` instala el proyecto en modo editable (un `.pth` hacia `/app/src`) y la etapa final del Dockerfile solo copia `.venv`. Lo cazó el job `smoke` de `release.yml` en su primera ejecución; `v0.4.1` instala con `--no-editable`. Reproducir: `docker run --rm ghcr.io/maxlainz/mhl-sentinel:0.4.0 mhl-sentinel --help`.
 - Vault: `MHL (Media Hash List)` ampliada (H13, generación parcial, historial apartado); `Historial ASC MHL anidado` ampliada (H14, H15, H16).
 
+## `v0.4.2` — Auto-actualización (D52)
+- El owner pide `latest` siempre y soporte de Watchtower («recrean la imagen a lo bruto»). El paquete ya es público y `latest` → última release. Opus auditó la robustez: ya era segura la escritura (temporal + rename) y el reencolado; añadió recuperación al arrancar antes de cualquier trabajo, parada ≤ 8 s, checkpoint WAL y `tests/test_recreate.py` (SIGKILL a mitad de sellado de 300 ficheros, reinicio con el mismo `/config`: recuperación en ~2 s, una generación, `verify` exit 0, SIGTERM sale con 0 en 0,3 s). Probado también el contenedor local sobre fixtures (`Seal` por API, `verify` exit 0, `docker stop` exit 0).
+
 ## Pendiente tras el MVP
 - Owner: hacer público el paquete en GHCR; abrir la raíz del archivo real con MediaVerify (issue #3); medir sobre el NAS (norma `prediccion-antes-de-medir.md`): tiempo de scan de ~100 proyectos y MB/s de hashing en el QNAP; actualizar el protocolo del estudio.
 - Repo: issue #2 (upstream, D47); plantilla QNAP probada en Container Station; notificaciones Apprise (D22).

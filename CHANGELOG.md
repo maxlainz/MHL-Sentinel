@@ -4,6 +4,12 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-01
+### Añadido
+- Operación con auto-actualización (D52): recuperación al arrancar (temporales y manifiestos huérfanos apartados antes de cualquier trabajo, también en `run-once`), parada por debajo de 10 s (SIGTERM de Docker/Watchtower), checkpoint del WAL al cerrar, hueco de migraciones futuras de la DB; test `tests/test_recreate.py` (SIGKILL a mitad de sellado y reinicio sobre el mismo `/config`: trabajo reencolado, una sola generación, `verify` exit 0). Watchtower opcional en `deploy/docker-compose.yml`; sección de auto-actualización en `deploy/README.md` y README.
+### Decidido
+- D52: cada release mueve `latest` (norma `ci.md`); el contenedor debe aguantar ser recreado a lo bruto.
+
 ## [0.4.1] - 2026-10-01
 ### Corregido
 - La imagen `0.4.0` no arrancaba (`ModuleNotFoundError: mhl_sentinel`): `uv sync` instalaba el paquete en modo editable apuntando a `/app/src`, que no existe en la etapa final. Ahora se instala con `--no-editable`. Lo detectó la prueba de humo del pipeline (H18).

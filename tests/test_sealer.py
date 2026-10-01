@@ -302,3 +302,62 @@ def test_superseded_history_must_live_outside_ascmhl(tmp_path: Path) -> None:
         broken = run_cli(tool, *args, project)
         assert broken.returncode != 0, broken.stdout
         assert "FileNotFoundError" in broken.stdout + broken.stderr
+
+
+# --- startup recovery after an abrupt recreation (SIGKILL between the two renames) -------------
+
+
+def test_startup_recovery_sets_orphans_aside_and_removes_temp_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    sealer.request_seal(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    folder = settings.archive_root / project.rel_path
+    (folder / "01_MASTERS" / "b.mov").write_bytes(b"b" * 50)
+
+    real_replace = os.replace
+
+    def crash_on_chain(src: Any, dst: Any) -> None:
+        if str(dst).endswith("ascmhl_chain.xml"):
+            raise OSError("simulated SIGKILL between the two renames")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", crash_on_chain)
+    with pytest.raises(OSError, match="simulated"):
+        write_project_generation(
+            folder, {"01_MASTERS/b.mov": xxh_all(folder)["01_MASTERS/b.mov"]}, partial=True
+        )
+    monkeypatch.setattr(os, "replace", real_replace)
+    asc = folder / "ascmhl"
+    orphan = next(asc.glob("0002_*.mhl"))
+    # SIGKILL skips _commit's ``finally``: the temp files stay too.
+    stale = [asc / f".{orphan.name}.tmp", asc / ".ascmhl_chain.xml.tmp"]
+    for path in stale:
+        path.write_bytes(b"<partial")
+    (settings.archive_root / "ascmhl").mkdir()
+    root_tmp = settings.archive_root / "ascmhl" / ".0001_root.mhl.tmp"
+    root_tmp.write_bytes(b"<partial")
+
+    result = sealer.recover_history_dirs(db, settings)
+    rel = f"{project.rel_path}/ascmhl"
+    assert result.orphans == [f"{rel}/{orphan.name}.orphan"]
+    assert sorted(result.temp_files) == sorted(
+        [f"{rel}/{p.name}" for p in stale] + [f"ascmhl/{root_tmp.name}"]
+    )
+    assert result.errors == []
+    assert not any(p.exists() for p in [*stale, root_tmp])
+    assert sealer.recover_history_dirs(db, settings) == sealer.FsRecovery()  # idempotent
+
+    # The next generation is numbered from the chain and the history verifies.
+    sealer.run_scan_cycle(db, settings, now=NOW)  # sees b.mov: changed
+    sealer.run_scan_cycle(db, settings, now=NOW)  # stable (settle_hours=0): append queued
+    run_all_jobs(db, settings)
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.SEALED
+    assert after.last_generation_no == 2
+    assert [p.name[:4] for p in sorted(asc.glob("*.mhl"))] == ["0001", "0002"]
+    verify = run_cli("ascmhl-debug", "verify", folder)
+    assert verify.returncode == 0, verify.stdout + verify.stderr

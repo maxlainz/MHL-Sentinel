@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -188,7 +188,10 @@ CREATE TABLE settings_kv (
 ) WITHOUT ROWID;
 """
 
-# Index i holds the script that takes user_version from i to i + 1.
+# Index i holds the script that takes user_version from i to i + 1. A future schema change
+# appends a script here (never edits an old one): a database left by the previous image is
+# migrated forward on the next start (auto-updated container, /config persists). Each script runs
+# with the ``user_version`` bump in one transaction, so a kill mid-migration leaves the old version.
 MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
 
 _TERMINAL_JOB_STATES = (JobState.DONE, JobState.FAILED, JobState.CANCELLED)
@@ -347,8 +350,14 @@ class Database:
         return self
 
     def close(self) -> None:
+        """Checkpoint the WAL into the main file (best effort) and close.
+
+        After an unclean stop (SIGKILL) the ``-wal`` file stays and SQLite replays it on the
+        next open; a clean close leaves a self-contained ``state.db``."""
         with self._lock:
             if self._conn is not None:
+                with suppress(sqlite3.Error):
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 self._conn.close()
                 self._conn = None
 
@@ -410,17 +419,19 @@ class Database:
         assert row is not None
         return int(row[0])
 
-    def migrate(self) -> int:
-        """Apply pending migrations; idempotent. Returns the resulting ``user_version``."""
+    def migrate(self, migrations: Sequence[str] = MIGRATIONS) -> int:
+        """Apply pending migrations; idempotent. Returns the resulting ``user_version``.
+
+        ``migrations`` exists for tests (a future v2 applied to a v1 database)."""
         with self._lock:
             current = self.user_version
-            if current > len(MIGRATIONS):
+            if current > len(migrations):
                 raise RuntimeError(
-                    f"database schema v{current} is newer than this app (v{len(MIGRATIONS)})"
+                    f"database schema v{current} is newer than this app (v{len(migrations)})"
                 )
-            for version in range(current, len(MIGRATIONS)):
+            for version in range(current, len(migrations)):
                 self.conn.executescript(
-                    f"BEGIN IMMEDIATE;\n{MIGRATIONS[version]}\n"
+                    f"BEGIN IMMEDIATE;\n{migrations[version]}\n"
                     f"PRAGMA user_version = {version + 1};\nCOMMIT;"
                 )
             return self.user_version

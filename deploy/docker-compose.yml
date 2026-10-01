@@ -6,6 +6,8 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 60s          # SIGTERM: termina el bloque en curso y guarda el checkpoint; nunca una generación a medias
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"   # D52: auto-actualización con Watchtower (sigue el tag latest)
     ports:
       - "${MHLS_PORT:-8080}:8080"
     environment:
@@ -15,3 +17,17 @@ services:
     volumes:
       - "${MHLS_ARCHIVE_HOST_PATH}:/archive"   # el archivo vigilado (lectura + escritura de <proyecto>/ascmhl/)
       - "${MHLS_CONFIG_HOST_PATH:-./config}:/config"   # config.yaml + state.db: disco LOCAL, nunca un share de red
+
+  # Opcional: auto-actualización (D52). Descarga `latest`, para el contenedor (SIGTERM, luego SIGKILL) y lo recrea.
+  # La app lo soporta: trabajos reencolados y nunca una generación a medias. Quita este servicio si ya tienes Watchtower en el NAS.
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"       # solo contenedores con la etiqueta de arriba
+      WATCHTOWER_CLEANUP: "true"            # borra las imágenes viejas
+      WATCHTOWER_TIMEOUT: "60s"             # tiempo para que la app cierre limpia antes del SIGKILL
+      WATCHTOWER_POLL_INTERVAL: "86400"     # una vez al día

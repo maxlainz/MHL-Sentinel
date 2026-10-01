@@ -40,7 +40,12 @@ from mhl_sentinel.settings_ref import SettingsRef
 log = logging.getLogger(__name__)
 
 ARCHIVE_TIMEOUT_SECONDS = 10.0
-STOP_TIMEOUT_SECONDS = 30.0
+# Upper bound for the hasher thread to reach the next 8 MiB block boundary after ``stop``. A
+# container runtime gives 10 s between SIGTERM and SIGKILL by default (Docker, Watchtower); the
+# HTTP shutdown runs in parallel (``server.GRACEFUL_HTTP_SECONDS``), so 8 s leaves margin. If the
+# thread is still reading (hung mount) it is a daemon: the process exits anyway, the job stays
+# ``running`` in the DB and the next start puts it back in the queue.
+STOP_TIMEOUT_SECONDS = 8.0
 IDLE_SECONDS = 5.0
 PROGRESS_MIN_INTERVAL = 0.5  # seconds between two job.progress events of the same job
 
@@ -111,6 +116,10 @@ class Supervisor:
         self._archive_reachable: bool | None = None
         self._archive_check: threading.Thread | None = None
         self._working_now = False
+        # Startup recovery of ascmhl/ folders (stale temp files, orphan manifests) must run
+        # before the first job; it needs the archive, so it runs at the first tick that reaches
+        # it, and the hasher waits for it.
+        self._fs_recovered = threading.Event()
 
     # -- public API --------------------------------------------------------------------------
 
@@ -122,6 +131,11 @@ class Supervisor:
         self.bus.bind(self._loop)
         self.stop_event.clear()
         recovered = sealer.recover_after_restart(self.db)
+        log.info(
+            "state database open (schema v%d); %d interrupted job(s) back in the queue",
+            self.db.user_version,
+            recovered,
+        )
         if recovered:
             self._publish_log("info", f"{recovered} interrupted job(s) back in the queue")
         self._loop_wakeup = asyncio.Event()
@@ -129,6 +143,23 @@ class Supervisor:
         self._hasher = threading.Thread(target=self._hasher_main, name="mhls-hasher", daemon=True)
         self._hasher.start()
         self._task = asyncio.create_task(self._loop_main(), name="mhls-supervisor")
+
+    def request_stop(self) -> None:
+        """Begin stopping now (called from the SIGTERM handler, before the HTTP shutdown): the
+        hasher aborts at its next block while uvicorn closes connections in parallel. Only sets
+        ``stop_event`` directly (signal-safe); the rest is scheduled on the loop. ``stop()`` must
+        still be awaited to join the thread."""
+        self.stop_event.set()
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(self._begin_stop)
+
+    def _begin_stop(self) -> None:
+        self.gate.clear()
+        self._wake.set()
+        if self._loop_wakeup is not None:
+            self._loop_wakeup.set()
 
     async def stop(self) -> None:
         """Close the gate, stop the hasher at the next block (job → queued), end the loop."""
@@ -257,6 +288,8 @@ class Supervisor:
         working = self._update_gate()
         settings = self.settings_ref.get()
         reachable = await self._check_archive()
+        if reachable and not self._fs_recovered.is_set():
+            await asyncio.to_thread(self._recover_history_dirs, settings)
         now = self.now_fn()
         requested = self._scan_requested.is_set()
         due = self._last_cycle_at is None or now - self._last_cycle_at >= timedelta(
@@ -301,12 +334,31 @@ class Supervisor:
         payload["last_cycle_at"] = to_iso(self._last_cycle_at) if self._last_cycle_at else None
         self.bus.publish("cycle.finished", payload)
 
+    def _recover_history_dirs(self, settings: Settings) -> None:
+        """Runs in a worker thread, once, before the hasher may start a job."""
+        result = sealer.recover_history_dirs(self.db, settings)
+        for tmp in result.temp_files:
+            self._publish_log("warning", f"stale temp file removed: {tmp}")
+        for orphan in result.orphans:
+            self._publish_log("warning", f"orphan manifest set aside: {orphan}")
+        for error in result.errors:
+            self._publish_log("warning", error)
+        log.info(
+            "startup recovery: %d temp file(s) removed, %d orphan manifest(s) set aside",
+            len(result.temp_files),
+            len(result.orphans),
+        )
+        self._fs_recovered.set()
+        self._wake.set()  # jobs may run now
+
     def _scan_and_schedule(
         self, settings: Settings, now: datetime, working: bool
     ) -> tuple[sealer.ScanSummary, list[tuple[str, JobKind]]]:
         """Scan cycle, then verifications (never during working hours, D33) and the root
         manifest job (hito 4). Runs in a worker thread."""
-        summary = sealer.run_scan_cycle(self.db, settings, now=now)
+        summary = sealer.run_scan_cycle(self.db, settings, now=now, stop=self.stop_event)
+        if self.stop_event.is_set():
+            return summary, []
         maintenance = sealer.schedule_maintenance(self.db, settings, now=now, working=working)
         return summary, maintenance
 
@@ -326,7 +378,11 @@ class Supervisor:
 
     def _hasher_step(self) -> bool:
         """Run the next job if the gate is open and the archive answers. True if one ran."""
-        if not self.gate.is_set() or self._archive_reachable is not True:
+        if (
+            not self.gate.is_set()
+            or self._archive_reachable is not True
+            or not self._fs_recovered.is_set()
+        ):
             return False
         job = self.db.next_job(self.now_fn())
         if job is None:

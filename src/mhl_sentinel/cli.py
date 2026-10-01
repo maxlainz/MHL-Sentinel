@@ -81,7 +81,16 @@ def run_once(ignore_working_hours: bool, seal_all: bool) -> None:
     _force_utc()
     settings = load_settings()
     with _open_db(settings) as db:
-        sealer.recover_after_restart(db)
+        requeued = sealer.recover_after_restart(db)
+        click.echo(f"state database open (schema v{db.user_version}); {requeued} job(s) requeued")
+        if settings.archive_root.is_dir():
+            recovery = sealer.recover_history_dirs(db, settings)
+            for tmp in recovery.temp_files:
+                click.echo(f"stale temp file removed: {tmp}")
+            for orphan in recovery.orphans:
+                click.echo(f"orphan manifest set aside: {orphan}")
+            for error in recovery.errors:
+                click.echo(f"error: {error}")
         try:
             summary = sealer.run_scan_cycle(db, settings, now=utcnow())
         except sealer.ArchiveUnavailableError as exc:
@@ -229,7 +238,7 @@ def serve(host: str, once_tick: bool) -> None:
             )
             return
         app = attach_supervisor(build_app(db, settings_ref, supervisor, bus), supervisor)
-        make_server(app, settings, host=host).run()
+        make_server(app, settings, host=host, on_stop=supervisor.request_stop).run()
 
 
 async def _one_tick(supervisor: Supervisor) -> SupervisorStatus:

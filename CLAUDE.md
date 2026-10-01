@@ -79,7 +79,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 02, `v0.4.1`)**: **MVP completo (D44)**: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 155 tests, todos los manifiestos validados por la referencia. D1–D51, H1–H18. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
+- **Estado (2026-10-01, bitácora 02, `v0.4.2`)**: **MVP completo (D44)**: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 155 tests, todos los manifiestos validados por la referencia. D1–D52, H1–H18. Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
 - **Después**: instalar en el QNAP (`deploy/README.md`), predecir y medir sobre el archivo real (bitácora 03), sellar un proyecto pequeño antes del backlog. Luego: plantilla Container Station probada, Apprise (D22), issue #2.
 
 ## Pendiente del owner (2026-10-01)

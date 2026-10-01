@@ -262,8 +262,12 @@ def run_scan_cycle(
     *,
     now: datetime,
     first_discovery_marker: str = FIRST_DISCOVERY_KEY,
+    stop: threading.Event | None = None,
 ) -> ScanSummary:
-    """Discovery → per-project scan → classify → persist → auto-enqueue. Reads no media file."""
+    """Discovery → per-project scan → classify → persist → auto-enqueue. Reads no media file.
+
+    ``stop`` (set by SIGTERM) ends the cycle between two projects, so a shutdown does not wait
+    for a whole archive walk; every project already scanned is committed."""
     root = settings.archive_root
     if not root.is_dir():
         raise ArchiveUnavailableError(f"archive root {root} is not a directory")
@@ -295,6 +299,8 @@ def run_scan_cycle(
             summary.states[project.rel_path] = ProjectState.ERROR
 
     for project in db.list_projects():
+        if stop is not None and stop.is_set():
+            break
         if project.rel_path not in on_disk or project.state is ProjectState.IGNORED:
             if project.state is ProjectState.IGNORED:
                 summary.states[project.rel_path] = project.state
@@ -517,6 +523,59 @@ def recover_after_restart(db: Database) -> int:
     for project in db.list_projects(ProjectState.HASHING):
         db.set_state(project.id, ProjectState.QUEUED)
     return count
+
+
+@dataclass(slots=True)
+class FsRecovery:
+    """What :func:`recover_history_dirs` cleaned up (archive-relative POSIX paths)."""
+
+    temp_files: list[str] = field(default_factory=list)  # stale ``.<name>.tmp`` removed
+    orphans: list[str] = field(default_factory=list)  # manifests renamed to ``*.orphan``
+    errors: list[str] = field(default_factory=list)
+
+
+def remove_stale_temp_files(folder: Path) -> list[Path]:
+    """Delete the ``ascmhl/.<name>.tmp`` files that ``mhlwriter._commit`` leaves behind when
+    the process is killed (SIGKILL, ``docker rm -f``) before its ``finally`` runs. Only call it
+    while no job is writing (at startup, before the hasher runs). Returns the removed paths."""
+    asc_dir = folder / HISTORY_DIR
+    if not asc_dir.is_dir():
+        return []
+    removed: list[Path] = []
+    for entry in sorted(asc_dir.iterdir()):
+        if entry.name.startswith(".") and entry.name.endswith(".tmp") and entry.is_file():
+            entry.unlink(missing_ok=True)
+            log.warning("stale temp file %s removed (interrupted write)", entry.name)
+            removed.append(entry)
+    return removed
+
+
+def recover_history_dirs(db: Database, settings: Settings) -> FsRecovery:
+    """Startup recovery of the ``ascmhl/`` folders, before any job runs (abrupt recreation of
+    the container, e.g. an auto-update): remove stale temp files and set orphan manifests
+    aside (issue #1) in the archive root and in every tracked, non-ignored project that has an
+    ``ascmhl/`` folder. A crash between the two renames of ``_commit`` therefore never reaches
+    the next generation. Per-folder failures are collected, not raised."""
+    root = settings.archive_root
+    out = FsRecovery()
+    folders: list[tuple[str, Path]] = [(".", root)]
+    folders += [
+        (p.rel_path, root / p.rel_path)
+        for p in db.list_projects()
+        if p.state is not ProjectState.IGNORED
+    ]
+    for rel, folder in folders:
+        prefix = "" if rel == "." else f"{rel}/"
+        try:
+            if not (folder / HISTORY_DIR).is_dir():
+                continue
+            for tmp in remove_stale_temp_files(folder):
+                out.temp_files.append(f"{prefix}{HISTORY_DIR}/{tmp.name}")
+            for orphan in quarantine_orphan_manifests(folder):
+                out.orphans.append(f"{prefix}{HISTORY_DIR}/{orphan.name}")
+        except Exception as exc:  # unreadable folder, broken chain: the scan will report it
+            out.errors.append(f"{rel}: startup recovery failed: {type(exc).__name__}: {exc}")
+    return out
 
 
 # --- jobs ------------------------------------------------------------------------------------

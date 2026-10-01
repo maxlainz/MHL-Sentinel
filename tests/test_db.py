@@ -11,6 +11,7 @@ import pytest
 
 from mhl_sentinel.clock import from_iso, to_iso, utcnow_iso
 from mhl_sentinel.db import (
+    MIGRATIONS,
     SCHEMA_VERSION,
     Database,
     NetworkFilesystemError,
@@ -71,6 +72,37 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
         assert second.user_version == 1
         project = second.get_project(pid)
         assert project is not None and project.preexisting
+
+
+def test_forward_migration_from_previous_version(tmp_path: Path) -> None:
+    """A /config left by the previous image (v1) is migrated by the next one (auto-update);
+    re-opening is a no-op and the data survives."""
+    path = tmp_path / "state.db"
+    mounts = tmp_path / "no-mounts"
+    with Database(path, mounts_file=mounts) as old:
+        pid = old.upsert_project("2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    future = (*MIGRATIONS, "CREATE TABLE future_slot (k TEXT PRIMARY KEY, v TEXT);")
+    with Database(path, mounts_file=mounts) as new:
+        assert new.migrate(future) == 2
+        assert new.migrate(future) == 2  # idempotent
+        assert new.get_project(pid) is not None
+        names = {r[0] for r in new.conn.execute("SELECT name FROM sqlite_master")}
+        assert "future_slot" in names
+    with pytest.raises(RuntimeError, match="newer"):  # v2 database, v1 app (rollback)
+        Database(path, mounts_file=mounts).open()
+
+
+def test_close_checkpoints_the_wal(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    db = Database(path, mounts_file=tmp_path / "no-mounts").open()
+    for i in range(50):
+        db.upsert_project(f"2024-{i:02d}_CLIENTE-CAMPANA", "x", False, T0)
+    wal = path.with_name(path.name + "-wal")
+    assert wal.exists() and wal.stat().st_size > 0
+    db.close()
+    assert not wal.exists() or wal.stat().st_size == 0
+    with Database(path, mounts_file=tmp_path / "no-mounts") as again:
+        assert len(again.list_projects()) == 50
 
 
 def test_newer_schema_refused(tmp_path: Path) -> None:

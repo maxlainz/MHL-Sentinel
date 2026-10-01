@@ -14,6 +14,11 @@ docker compose -f deploy/docker-compose.yml up -d
 3. `MHLS_TIMEZONE`: la zona del estudio (el horario laboral se evalúa en ella).
 4. Abre `http://<nas>:8080`. La GUI no lleva login (D35): no la expongas fuera de la LAN sin un proxy con autenticación.
 
+## Auto-actualización (D52)
+La imagen `ghcr.io/maxlainz/mhl-sentinel:latest` apunta siempre a la última release. El `docker-compose.yml` incluye un servicio opcional de [Watchtower](https://containrrr.dev/watchtower/) que descarga `latest` una vez al día y recrea el contenedor. En QNAP Container Station se puede usar en su lugar la opción de «actualizar imagen» del propio contenedor, o cualquier herramienta que haga `docker compose pull && docker compose up -d`: el resultado es el mismo.
+
+Qué garantiza la app cuando la recrean sin miramientos (SIGTERM con timeout corto o SIGKILL directo): ninguna generación queda a medias (se escriben en temporal y se renombran al final; un manifiesto que quede fuera de la cadena se aparta como `.orphan` al arrancar), el trabajo en curso vuelve a la cola y continúa con los hashes ya calculados (checkpoint por fichero), y `config.yaml` y `state.db` sobreviven en `/config`. Lo único que se pierde es el fichero que se estaba leyendo en ese momento, que se vuelve a leer. Dale a Watchtower un `WATCHTOWER_TIMEOUT` de 60 s para que el cierre sea limpio; con el valor por defecto (10 s) también funciona, solo que cerrando por SIGKILL.
+
 ## Construcción local
 ```sh
 make docker-build                                   # mhl-sentinel:dev para la arquitectura del host
