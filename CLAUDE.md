@@ -79,8 +79,8 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 02, `v0.1.0`)**: MVP en curso (D44: hitos 1–4). **Hito 1 cerrado**: núcleo sin GUI (`config`, `db`, `schedule`, `discovery`, `scanner`, `legacy_mhl`, `hasher`, `sealer`, `cli run-once`), 105 tests, e2e validado por la referencia. D1–D50, H1–H13. Empaquetado Docker y `release.yml` ya escritos (pendientes de probar en hito 2). Issues abiertos: #2 (upstream, aplazado), #3 (`roothash` raíz, hito 4).
-- **Después**: hito 2 (`events`, `supervisor`, `serve`, SIGTERM, imagen en GHCR) y hito 3 (GUI) en paralelo contra `docs/arquitectura.md`; luego hito 4 (raíz de referencias, verify 90 días).
+- **Estado (2026-10-01, bitácora 02, `v0.3.0`)**: MVP en curso (D44). **Hitos 1–3 cerrados**: núcleo, daemon (`supervisor`, `serve`, SIGTERM limpio), Docker (`deploy/`, imagen en GHCR por `release.yml`) y GUI de una pantalla (`web/`). 137 tests; probado de extremo a extremo en local sobre fixtures. D1–D50, H1–H13. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz).
+- **Después**: hito 4 (`rootmanifest.py`, trabajo `verify` escalonado, resultados en GUI) → `v0.4.0` = MVP. Luego: medir sobre el NAS real (norma `prediccion-antes-de-medir.md`), MediaVerify sobre la raíz (#3), hacer público el paquete en GHCR.
 
 ## Pendiente del owner (2026-10-01)
 - Fuera del repo: actualizar el protocolo del estudio (`ascmhl/` en vez de `00_MANIFEST.mhl`; xxh128; `ascmhl-debug verify`; verificación trimestral por la app; `Seal` al terminar de archivar).
