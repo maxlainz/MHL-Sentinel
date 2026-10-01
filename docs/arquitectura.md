@@ -88,7 +88,7 @@ port: 8080                        # solo env
 | `GET /` | Pantalla única (D11): cabecera (Archive OK/KO · working hours now? · next change · current job), contadores (projects, needs review, unsealed, queued), lista de proyectos con semáforo y fecha; botones `Run scan now`, `Settings`. Entradas fuera de sitio (D49) en un aviso plegable. Lista = fragmento HTMX refrescado por SSE (`hx-ext="sse"`, evento `project.state`/`cycle.finished` → `hx-get /fragments/projects`). |
 | `GET /fragments/projects`, `GET /fragments/header` | Fragmentos HTMX. |
 | `GET /projects/{id}` | Detalle: generaciones (desde `MHLHistory`), ficheros, estado; si `needs_review`, el boceto D46 con `Accept as new version` / `Postpone`; si `unsealed`, `Seal`; siempre `Ignore`/`Unignore`. Trabajo en curso con barra de progreso (SSE `job.progress`). |
-| `POST /projects/{id}/seal|ignore|unignore|accept|postpone` | Llaman a `sealer.request_*`; devuelven el fragmento del proyecto. |
+| `POST /projects/{id}/seal|ignore|unignore|accept|postpone|cancel` | Llaman a `sealer.request_*`; devuelven el fragmento del proyecto. `cancel` solo para un `seal`/`accept` manual en cola (D53). |
 | `POST /scan-now` | `supervisor.request_scan_now()`. |
 | `GET /settings`, `POST /settings` | Boceto D45. Valida con `Settings`; `save_yaml`; recarga `settings_ref`. Campos solo-env deshabilitados. |
 | `GET /events` | SSE (`sse-starlette`): un evento por `Event` del bus, `event: <kind>`, `data: json`. |

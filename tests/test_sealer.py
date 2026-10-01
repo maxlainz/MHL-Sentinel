@@ -19,7 +19,7 @@ from mhl_sentinel import sealer
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, ProjectRow
 from mhl_sentinel.mhlwriter import SUPERSEDED_DIR, write_project_generation
-from mhl_sentinel.models import FileStat, JobKind, JobState, ProjectState, ScanDiff
+from mhl_sentinel.models import FileStat, JobKind, JobState, ProjectState, ScanDiff, Trigger
 
 NOW = datetime(2026, 10, 1, 22, 0, tzinfo=UTC)
 
@@ -174,6 +174,40 @@ def test_requests_and_missing_folder(tmp_path: Path) -> None:
     assert summary.missing == [first.rel_path]
     gone = db.get_project(first.id)
     assert gone is not None and gone.state is ProjectState.ERROR and gone.error == "folder missing"
+
+
+def test_cancel_returns_the_project_to_its_previous_state(tmp_path: Path) -> None:
+    """D53: Cancel withdraws a manual Seal/Accept; automatic jobs are not cancellable."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    first, second = db.list_projects()
+    with pytest.raises(sealer.SealerError):
+        sealer.request_cancel(db, first.id, NOW)  # nothing queued
+
+    job_id = sealer.request_seal(db, first.id, NOW)
+    assert sealer.request_cancel(db, first.id, NOW) == job_id
+    project = db.get_project(first.id)
+    assert project is not None and project.state is ProjectState.UNSEALED
+    job = db.get_job(job_id)
+    assert job is not None and job.state is JobState.CANCELLED and job.finished_at
+    assert db.next_job(NOW) is None
+
+    # Seal, run it, then force a review and cancel the Accept: review and reason survive.
+    sealer.request_seal(db, first.id, NOW)
+    run_all_jobs(db, settings)
+    db.set_state(first.id, ProjectState.NEEDS_REVIEW, review_reason="modified: 01_MASTERS/a.mov")
+    sealer.request_accept_new_version(db, first.id, NOW)
+    sealer.request_cancel(db, first.id, NOW)
+    project = db.get_project(first.id)
+    assert project is not None and project.state is ProjectState.NEEDS_REVIEW
+    assert project.review_reason == "modified: 01_MASTERS/a.mov"
+
+    # An automatic job (append after settle) is not offered for cancellation.
+    sealer.enqueue(db, second.id, JobKind.APPEND, Trigger.AUTO, NOW)
+    db.set_state(second.id, ProjectState.QUEUED)
+    assert sealer.cancellable_job(db, db.get_project(second.id)) is None  # type: ignore[arg-type]
+    with pytest.raises(sealer.SealerError):
+        sealer.request_cancel(db, second.id, NOW)
 
 
 def test_new_project_after_first_discovery_seals_itself(tmp_path: Path) -> None:

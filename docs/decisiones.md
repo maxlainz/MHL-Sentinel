@@ -284,6 +284,12 @@ Sealing
 - **Elección**: (1) cada release mueve `latest` (norma `ci.md`); (2) la app es segura ante SIGKILL en cualquier punto: generaciones en temporal + rename, trabajos reencolados al arrancar, manifiestos huérfanos y temporales limpiados antes de arrancar el supervisor, `stop()` por debajo de 10 s; demostrado por `tests/test_recreate.py`; (3) `deploy/docker-compose.yml` lleva las etiquetas de Watchtower y `stop_grace_period`, y la guía documenta `WATCHTOWER_TIMEOUT`; (4) las migraciones de la DB avanzan solas al arrancar y nunca se baja de versión.
 - 2026-10-01.
 
+## D53 — Botón `Cancel` para un Seal o Accept en cola
+- **Contexto**: el owner sella a mano (D16) y el trabajo espera a la ventana fuera de horario (D33). No había forma de retirarlo salvo `Ignore`, que deja de vigilar la carpeta (issue #4).
+- **Opciones**: (1) cancelar solo trabajos manuales (`seal`, `accept_new_version`) en cola; (2) también los automáticos (`append`), inútil porque el siguiente ciclo los vuelve a encolar; (3) abortar un trabajo en marcha, que exige parar el hilo hasher a mitad.
+- **Elección**: (1). `sealer.request_cancel`: el job pasa a `cancelled`, el proyecto vuelve a `unsealed` o `needs_review` (conservando el motivo de revisión) y los hashes ya calculados se conservan en la caché (D28). Un trabajo parado por el horario laboral vuelve a la cola y por tanto también se puede cancelar. Abortar un trabajo en marcha queda para otro issue si hace falta.
+- 2026-10-01 (petición del owner).
+
 ---
 
 ## Pendiente de entrevista

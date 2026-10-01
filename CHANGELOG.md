@@ -3,6 +3,12 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- Botón `Cancel` en la tarjeta del proyecto: retira un `Seal` o `Accept as new version` que espera en cola y devuelve el proyecto a su estado anterior (D53, #4). `POST /projects/{id}/cancel`.
+
+### Decidido
+- D53: solo se cancelan trabajos manuales en cola; los automáticos no (el siguiente ciclo los reencolaría) y los que están en marcha tampoco.
+
 ### Medido
 - H19: primera pasada sobre el archivo real en el NAS: 95 proyectos, 32 050 ficheros, 11,8 TB, ~34 s (predicción de tiempo acertada, la de ficheros no). Bitácora 02.
 
