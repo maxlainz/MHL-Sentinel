@@ -10,9 +10,14 @@ dependencies = [
   # D1 / norma conformidad-mhl.md: la referencia es el oráculo; subir versión es decisión del owner.
   "ascmhl==1.2",
   "click>=8.1.8",
+  "fastapi>=0.142.2",
+  "jinja2>=3.1.6",
   "pathspec>=1.1.1",
   "pydantic-settings>=2.15.0",
+  "python-multipart>=0.0.32",
   "pyyaml>=6.0.3",
+  "sse-starlette>=3.5.0",
+  "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
@@ -25,6 +30,7 @@ dev = [
   "mypy>=1.13",
   "lxml-stubs>=0.5",
   "types-pyyaml>=6.0.12.20260906",
+  "httpx>=0.28.1",
 ]
 
 [build-system]
