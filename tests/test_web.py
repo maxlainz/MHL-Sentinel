@@ -18,6 +18,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from mhl_sentinel import sealer
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
@@ -555,7 +556,7 @@ def test_activity_marks_reviews_and_orders_by_finish(env: Env) -> None:
     db.set_job_state(verify, JobState.DONE, NOW + timedelta(minutes=30))
     seal = db.enqueue_job(JobKind.SEAL, unsealed, Trigger.MANUAL, 130, NOW)
     db.set_job_state(seal, JobState.DONE, NOW + timedelta(minutes=10))
-    db.log(seal, "warning", "needs review, nothing written: 1 modified since the seal", NOW)
+    db.log(seal, "warning", sealer.REVIEW_LOG_PREFIX + "1 modified since the seal", NOW)
     cancelled = db.enqueue_job(JobKind.SEAL, unsealed, Trigger.MANUAL, 130, NOW)
     db.set_job_state(cancelled, JobState.CANCELLED, NOW + timedelta(minutes=5))
     ok = db.enqueue_job(JobKind.ROOT_MANIFEST, None, Trigger.AUTO, 5, NOW)

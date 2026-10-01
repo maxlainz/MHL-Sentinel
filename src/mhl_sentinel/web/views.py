@@ -573,7 +573,7 @@ _QUEUED_LABEL: dict[JobKind, str] = {
 }
 
 
-_REVIEW_LOG_PREFIX = "needs review, nothing written: "  # sealer._to_review
+_REVIEW_LOG_PREFIX = sealer.REVIEW_LOG_PREFIX
 
 
 def _went_to_review(db: Database, job: JobRow) -> str:
