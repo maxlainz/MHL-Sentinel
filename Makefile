@@ -27,8 +27,8 @@ ci: leak-check lint typecheck test   # el gate de cada commit
 fixtures:     # genera un archivo sintético en tests/fixtures/archive (gitignored)
 	@uv run python scripts/make_fixtures.py
 
-docker-build: # construye la imagen local — hito 2
-	@echo "pendiente: hito 2"
+docker-build: # construye la imagen local mhl-sentinel:dev (deploy/Dockerfile)
+	@docker build -f deploy/Dockerfile -t mhl-sentinel:dev .
 
-run:          # arranca la app en local sobre los fixtures — hito 1
-	@echo "pendiente: hito 1"
+run:          # arranca la app en local sobre los fixtures (GUI en http://localhost:8080)
+	@mkdir -p config && MHLS_ARCHIVE_ROOT=tests/fixtures/archive MHLS_CONFIG_DIR=config TZ=UTC uv run mhl-sentinel serve

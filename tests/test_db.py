@@ -1,0 +1,270 @@
+"""State database: pragmas, migrations, network-FS refusal and repository methods."""
+
+from __future__ import annotations
+
+import threading
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from mhl_sentinel.clock import from_iso, to_iso, utcnow_iso
+from mhl_sentinel.db import (
+    SCHEMA_VERSION,
+    Database,
+    NetworkFilesystemError,
+    ReviewItem,
+    SealedFile,
+    is_network_fs,
+)
+from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
+
+T0 = datetime(2026, 10, 1, 20, 0, tzinfo=UTC)
+TABLES = {
+    "projects",
+    "files",
+    "sealed_files",
+    "file_hashes",
+    "scans",
+    "jobs",
+    "job_log",
+    "review_items",
+    "verify_results",
+    "settings_kv",
+}
+
+
+@pytest.fixture
+def db(tmp_path: Path) -> Iterator[Database]:
+    with Database(tmp_path / "state.db", mounts_file=tmp_path / "no-mounts") as database:
+        yield database
+
+
+def test_clock_round_trip() -> None:
+    assert to_iso(T0) == "2026-10-01T20:00:00.000000Z"
+    assert from_iso(to_iso(T0)) == T0
+    assert utcnow_iso().endswith("Z")
+    with pytest.raises(ValueError):
+        to_iso(datetime(2026, 10, 1))
+
+
+def test_pragmas_and_schema(db: Database) -> None:
+    conn = db.conn
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert names >= TABLES
+    assert db.user_version == SCHEMA_VERSION == 1
+
+
+def test_migrate_is_idempotent(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    mounts = tmp_path / "no-mounts"
+    with Database(path, mounts_file=mounts) as first:
+        pid = first.upsert_project("2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+        assert first.migrate() == 1
+        assert first.migrate() == 1
+    with Database(path, mounts_file=mounts) as second:
+        assert second.user_version == 1
+        project = second.get_project(pid)
+        assert project is not None and project.preexisting
+
+
+def test_newer_schema_refused(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    mounts = tmp_path / "no-mounts"
+    with Database(path, mounts_file=mounts) as database:
+        database.conn.execute("PRAGMA user_version = 99")
+    with pytest.raises(RuntimeError, match="newer"):
+        Database(path, mounts_file=mounts).open()
+
+
+MOUNTS = """\
+sysfs /sys sysfs rw 0 0
+/dev/sda1 / ext4 rw 0 0
+/dev/sdb1 /config ext4 rw 0 0
+//nas/share /archive cifs rw 0 0
+nas:/export /mnt/nfs\\040dir nfs4 rw 0 0
+user@host:/x /mnt/ssh fuse.sshfs rw 0 0
+"""
+
+
+def test_is_network_fs(tmp_path: Path) -> None:
+    mounts = tmp_path / "mounts"
+    mounts.write_text(MOUNTS, encoding="utf-8")
+    assert not is_network_fs(Path("/config"), mounts)
+    assert not is_network_fs(Path("/config/sub"), mounts)
+    assert not is_network_fs(Path("/tmp"), mounts)
+    assert is_network_fs(Path("/archive"), mounts)
+    assert is_network_fs(Path("/archive/2024-01_CLIENTE-CAMPANA"), mounts)
+    assert is_network_fs(Path("/mnt/nfs dir/state"), mounts)
+    assert is_network_fs(Path("/mnt/ssh"), mounts)
+    assert not is_network_fs(Path("/archive"), tmp_path / "missing")
+
+
+def test_open_refuses_network_fs(tmp_path: Path) -> None:
+    mounts = tmp_path / "mounts"
+    mounts.write_text(f"//nas/share {tmp_path.resolve()} cifs rw 0 0\n", encoding="utf-8")
+    with pytest.raises(NetworkFilesystemError):
+        Database(tmp_path / "state.db", mounts_file=mounts).open()
+    assert not (tmp_path / "state.db").exists()
+
+
+def test_projects(db: Database) -> None:
+    pid = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    again = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "renamed", False, T0 + timedelta(1))
+    assert again == pid
+    p = db.get_project("A/2024-01_CLIENTE-CAMPANA")
+    assert p is not None
+    assert p.id == pid and p.name == "renamed" and p.preexisting
+    assert p.state is ProjectState.UNSEALED and p.first_seen == to_iso(T0)
+    other = db.upsert_project("B/2024-02_CLIENTE-CAMPANA", "2024-02_CLIENTE-CAMPANA", False, T0)
+
+    db.set_state(pid, ProjectState.NEEDS_REVIEW, review_reason="modified files")
+    db.update_project_fields(pid, last_scan_at=T0, file_count=3, total_bytes=30)
+    p = db.get_project(pid)
+    assert p is not None
+    assert p.state is ProjectState.NEEDS_REVIEW and p.review_reason == "modified files"
+    assert p.last_scan_at == to_iso(T0) and p.file_count == 3
+    assert [x.id for x in db.list_projects()] == [pid, other]
+    assert [x.id for x in db.list_projects(ProjectState.NEEDS_REVIEW)] == [pid]
+    db.set_state(pid, ProjectState.SEALED)
+    p = db.get_project(pid)
+    assert p is not None and p.review_reason is None
+    with pytest.raises(ValueError):
+        db.update_project_fields(pid, rel_path="x")
+    assert db.get_project(999) is None
+
+
+def test_files_and_sealed_files(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    db.replace_files(pid, [FileStat("a.mov", 10, 1), FileStat("b/c.wav", 20, 2)])
+    db.replace_files(pid, [FileStat("a.mov", 11, 3)])
+    assert db.get_files(pid) == {"a.mov": FileStat("a.mov", 11, 3)}
+    rows = [SealedFile("a.mov", 11, 3, "ab" * 16), SealedFile("x", 0, 0, None)]
+    db.replace_sealed_files(pid, rows)
+    assert db.get_sealed_files(pid) == {r.rel_path: r for r in rows}
+
+
+def test_cached_hash_lookup_and_prune(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    db.put_hash(pid, "a.mov", 10, 100, "xxh128", "aa", T0)
+    db.put_hash(pid, "a.mov", 10, 100, "md5", "bb", T0)
+    db.put_hash(pid, "b.mov", 5, 50, "xxh128", "cc", T0)
+    assert db.get_cached_hashes(pid, "a.mov", 10, 100) == {"xxh128": "aa", "md5": "bb"}
+    assert db.get_cached_hashes(pid, "a.mov", 10, 101) == {}  # mtime changed: no cache
+    assert db.get_cached_hashes(pid, "a.mov", 11, 100) == {}  # size changed: no cache
+    db.put_hash(pid, "a.mov", 12, 120, "xxh128", "dd", T0)  # rehash replaces the row
+    assert db.get_cached_hashes(pid, "a.mov", 12, 120) == {"xxh128": "dd"}
+    assert db.get_cached_hashes(pid, "a.mov", 10, 100) == {"md5": "bb"}
+    removed = db.prune_hashes(pid, [FileStat("a.mov", 12, 120)])
+    assert removed == 2  # stale a.mov md5 + b.mov
+    assert db.get_cached_hashes(pid, "b.mov", 5, 50) == {}
+    assert db.get_cached_hashes(pid, "a.mov", 12, 120) == {"xxh128": "dd"}
+
+
+def test_scans(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    sid = db.start_scan("project", pid, T0)
+    db.finish_scan(sid, files=3, bytes=30, added=1, status="ok", now=T0 + timedelta(seconds=5))
+    row = db.conn.execute("SELECT * FROM scans WHERE id = ?", (sid,)).fetchone()
+    assert row["files"] == 3 and row["added"] == 1 and row["status"] == "ok"
+    assert row["finished_at"] == to_iso(T0 + timedelta(seconds=5))
+    assert db.start_scan("discovery", None, T0) != sid
+
+
+def test_duplicate_job_rule(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    j1 = db.enqueue_job(JobKind.SEAL, pid, Trigger.AUTO, 10, T0)
+    assert db.enqueue_job(JobKind.SEAL, pid, Trigger.MANUAL, 100, T0) == j1
+    j2 = db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 1, T0)
+    assert j2 != j1
+    db.set_job_state(j1, JobState.RUNNING, T0)
+    assert db.enqueue_job(JobKind.SEAL, pid, Trigger.AUTO, 10, T0) == j1
+    db.set_job_state(j1, JobState.DONE, T0)
+    j3 = db.enqueue_job(JobKind.SEAL, pid, Trigger.AUTO, 10, T0)
+    assert j3 not in (j1, j2)
+    # Jobs without project (root manifest) are deduplicated too.
+    r1 = db.enqueue_job(JobKind.ROOT_MANIFEST, None, Trigger.AUTO, 0, T0)
+    assert db.enqueue_job(JobKind.ROOT_MANIFEST, None, Trigger.AUTO, 0, T0) == r1
+
+
+def test_next_job_order_progress_and_log(db: Database) -> None:
+    a = db.upsert_project("A", "A", False, T0)
+    b = db.upsert_project("B", "B", False, T0)
+    low = db.enqueue_job(JobKind.VERIFY, a, Trigger.AUTO, 1, T0)
+    old = db.enqueue_job(JobKind.SEAL, a, Trigger.AUTO, 10, T0)
+    new = db.enqueue_job(JobKind.SEAL, b, Trigger.AUTO, 10, T0 + timedelta(minutes=1))
+    nxt = db.next_job(T0)
+    assert nxt is not None and nxt.id == old and nxt.kind is JobKind.SEAL
+    db.set_job_state(old, JobState.RUNNING, T0)
+    nxt = db.next_job(T0)
+    assert nxt is not None and nxt.id == new
+    db.update_job_progress(old, 1, 4, 100, 400)
+    db.log(old, "info", "hashing a.mov", T0)
+    db.log(old, "warning", "file changed", T0)
+    job = db.get_job(old)
+    assert job is not None
+    assert (job.files_done, job.files_total, job.bytes_done, job.bytes_total) == (1, 4, 100, 400)
+    assert job.started_at == to_iso(T0) and job.state is JobState.RUNNING
+    assert [e.msg for e in db.get_job_log(old)] == ["hashing a.mov", "file changed"]
+    db.set_job_state(old, JobState.FAILED, T0, error="boom")
+    job = db.get_job(old)
+    assert job is not None and job.finished_at == to_iso(T0) and job.error == "boom"
+    assert [j.id for j in db.list_jobs(2)] == [new, old]
+    assert low in [j.id for j in db.list_jobs(10)]
+
+
+def test_requeue_running_jobs(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    j = db.enqueue_job(JobKind.APPEND, pid, Trigger.AUTO, 5, T0)
+    db.set_job_state(j, JobState.RUNNING, T0)
+    assert db.next_job(T0) is None
+    assert db.requeue_running_jobs() == 1
+    job = db.get_job(j)
+    assert job is not None and job.state is JobState.QUEUED and job.started_at is None
+    nxt = db.next_job(T0)
+    assert nxt is not None and nxt.id == j
+    assert db.requeue_running_jobs() == 0
+
+
+def test_review_items_and_kv(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+    items = [
+        ReviewItem("b.mov", ChangeKind.DELETED, old_size=5, old_mtime_ns=1),
+        ReviewItem("a.mov", ChangeKind.MODIFIED, 5, 6, 1, 2),
+    ]
+    db.replace_review_items(pid, items)
+    assert db.get_review_items(pid) == sorted(items, key=lambda i: i.rel_path)
+    db.clear_review_items(pid)
+    assert db.get_review_items(pid) == []
+    assert db.get_kv("first_discovery_done") is None
+    db.set_kv("first_discovery_done", "1")
+    db.set_kv("first_discovery_done", "2")
+    assert db.get_kv("first_discovery_done") == "2"
+
+
+def test_transaction_rolls_back_and_nests(db: Database) -> None:
+    with pytest.raises(RuntimeError), db.transaction():
+        db.set_kv("k", "v")  # nested: joins the outer transaction
+        raise RuntimeError
+    assert db.get_kv("k") is None
+
+
+def test_concurrent_writers(db: Database) -> None:
+    pid = db.upsert_project("P", "P", False, T0)
+
+    def worker(n: int) -> None:
+        for i in range(50):
+            db.put_hash(pid, f"f{n}-{i}", i, i, "xxh128", "00", T0)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    count = db.conn.execute("SELECT COUNT(*) FROM file_hashes").fetchone()[0]
+    assert count == 200

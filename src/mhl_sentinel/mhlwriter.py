@@ -70,6 +70,7 @@ def write_project_generation(
     *,
     directory_hash_formats: Sequence[str] = (PRIMARY_HASH_FORMAT,),
     inherited_formats: Collection[str] = (),
+    partial: bool = False,
 ) -> Path:
     """Append a generation to the ASC MHL history of ``project_root``.
 
@@ -93,6 +94,11 @@ def write_project_generation(
     hashes for each format in ``directory_hash_formats`` (every file must carry
     them).
 
+    ``partial=True`` (D48): the generation holds only the given files. No
+    completeness check against the tree, no directory hashes, no roothash; the
+    given paths must exist and not be ignored, and the write is still atomic.
+    Meant for appending newly added files (the spec allows partial generations).
+
     Returns the path of the new manifest.
     """
     root = Path(project_root).resolve()
@@ -104,6 +110,11 @@ def write_project_generation(
 
     ignore_spec = MHLIgnoreSpec(history.latest_ignore_patterns(), list(ignore_patterns))
     session = MHLGenerationCreationSession(history, ignore_spec)
+
+    if partial:
+        return _write_partial(
+            root, history, session, ignore_spec, file_hashes, tool_version, inherited_formats
+        )
 
     expected_paths = set(file_hashes)
     seen_paths: set[str] = set()
@@ -162,13 +173,7 @@ def write_project_generation(
     if failures:
         raise MHLWriteError(f"hash mismatch (review, not a generation): {failures}")
 
-    new_hash_list = session.new_hash_lists[history]
-    new_hash_list.creator_info = _creator_info(tool_version)
-    new_hash_list.process_info.process = MHLProcess("in-place")
-    new_hash_list.process_info.ignore_spec = session.get_relevant_ignore_pattern(history)
-    # Turns "new" entries into "verified" and asserts the existing format was verified.
-    history._validate_new_hash_list(new_hash_list)
-    return _commit(history, new_hash_list, _write_with_ascmhl)
+    return _finish(history, session, tool_version)
 
 
 def write_root_references_generation(
@@ -217,6 +222,45 @@ def write_root_references_generation(
 
 
 # --- internals -------------------------------------------------------------
+
+
+def _finish(history: Any, session: Any, tool_version: str) -> Path:
+    new_hash_list = session.new_hash_lists[history]
+    new_hash_list.creator_info = _creator_info(tool_version)
+    new_hash_list.process_info.process = MHLProcess("in-place")
+    new_hash_list.process_info.ignore_spec = session.get_relevant_ignore_pattern(history)
+    # Turns "new" entries into "verified" and asserts the existing format was verified.
+    history._validate_new_hash_list(new_hash_list)
+    return _commit(history, new_hash_list, _write_with_ascmhl)
+
+
+def _write_partial(
+    root: Path,
+    history: Any,
+    session: Any,
+    ignore_spec: Any,
+    file_hashes: Mapping[str, Mapping[str, str]],
+    tool_version: str,
+    inherited_formats: Collection[str],
+) -> Path:
+    if not file_hashes:
+        raise MHLWriteError("a partial generation needs at least one file")
+    path_spec = ignore_spec.get_path_spec()
+    failures: list[str] = []
+    for rel_path in sorted(file_hashes):
+        abs_path = root / rel_path
+        if not abs_path.is_file():
+            raise MHLWriteError(f"{rel_path} is not a file on disk")
+        if path_spec.match_file(rel_path):
+            raise MHLWriteError(f"{rel_path} is ignored by the ignore patterns")
+        failures.extend(
+            _append_file(
+                session, history, str(abs_path), rel_path, file_hashes[rel_path], inherited_formats
+            )
+        )
+    if failures:
+        raise MHLWriteError(f"hash mismatch (review, not a generation): {failures}")
+    return _finish(history, session, tool_version)
 
 
 def _append_file(

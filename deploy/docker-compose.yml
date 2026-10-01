@@ -1,0 +1,17 @@
+# Ejemplo de despliegue (D2, D32). Copia .env.example a .env y ajusta las rutas del host.
+services:
+  mhl-sentinel:
+    image: ghcr.io/maxlainz/mhl-sentinel:latest
+    container_name: mhl-sentinel
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s          # SIGTERM: termina el bloque en curso y guarda el checkpoint; nunca una generación a medias
+    ports:
+      - "${MHLS_PORT:-8080}:8080"
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      MHLS_TIMEZONE: "${MHLS_TIMEZONE:-UTC}"   # zona del horario laboral (D33); el proceso corre en UTC
+    volumes:
+      - "${MHLS_ARCHIVE_HOST_PATH}:/archive"   # el archivo vigilado (lectura + escritura de <proyecto>/ascmhl/)
+      - "${MHLS_CONFIG_HOST_PATH:-./config}:/config"   # config.yaml + state.db: disco LOCAL, nunca un share de red

@@ -264,6 +264,11 @@ Sealing
 - **Elección**: la generación de un `append` lista **solo los ficheros añadidos** como `original`, sin hashes de directorio ni `roothash` (la spec lo permite: la referencia lo hace con `-sf`; la completitud en `verify` es la unión de todas las generaciones). El sellado inicial y la verificación de 90 días (D23) sí leen todo y escriben generación completa. Se comprueba en tests que `ascmhl-debug verify` acepta el historial tras una generación parcial.
 - 2026-10-01, hito 1.
 
+## D49 — Detección solo por niveles, sin excepciones
+- **Contexto**: con «proyectos 1 nivel por debajo» un proyecto dejado directamente en la raíz se interpreta como contenedor y sus subcarpetas salen como proyectos falsos (test de `discovery.py`, hito 1). Opciones: marcador `ascmhl/` + botón `Treat as project`; solo niveles; heurística por contenido.
+- **Elección**: solo niveles. La GUI muestra las «entradas fuera de sitio» (ficheros o carpetas en la raíz o en niveles intermedios que no encajan) para que producción ordene el archivo; la app no adivina. Confirma D18.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista

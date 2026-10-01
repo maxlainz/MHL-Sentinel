@@ -9,6 +9,9 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   # D1 / norma conformidad-mhl.md: la referencia es el oráculo; subir versión es decisión del owner.
   "ascmhl==1.2",
+  "pathspec>=1.1.1",
+  "pydantic-settings>=2.15.0",
+  "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
@@ -17,6 +20,7 @@ dev = [
   "ruff>=0.8",
   "mypy>=1.13",
   "lxml-stubs>=0.5",
+  "types-pyyaml>=6.0.12.20260906",
 ]
 
 [build-system]

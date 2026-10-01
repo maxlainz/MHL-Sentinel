@@ -57,7 +57,8 @@ archive_root: /archive            # fijo por el montaje; solo env
 project_depth: 1                  # D18
 ignore_prefixes: "_@#."           # D19
 exclude_globs: []                 # D14, p. ej. ["*.md", "*.txt"]; solo crecen (spec)
-working_hours: {days: [mon,tue,wed,thu,fri], start: "09:00", end: "19:00"}   # D33; tz = env TZ
+working_hours: {days: [mon,tue,wed,thu,fri], start: "09:00", end: "19:00"}   # D33
+timezone: UTC                     # zona del horario laboral (env MHLS_TIMEZONE); el proceso corre con TZ=UTC
 settle_hours: 168                 # D31
 verify_interval_days: 90          # D23
 scan_interval_minutes: 60
@@ -69,6 +70,6 @@ port: 8080                        # solo env
 
 ## Reglas transversales
 - Nunca una generación parcial a medias: temporal + rename (`mhlwriter._commit`). Ver issue #1 para huérfanos.
-- `TZ=UTC` en el proceso que escribe manifiestos; las horas de la GUI se muestran en la zona del horario laboral.
+- El contenedor corre con `TZ=UTC` (ascmhl escribe fechas con el offset actual); la zona del horario laboral es `settings.timezone` y es la que muestra la GUI.
 - Todo manifiesto que se escriba en tests se valida con `ascmhl-debug verify` y `xsd-schema-check` (norma `conformidad-mhl.md`).
 - Nada de rutas absolutas ni nombres del estudio en código, tests ni docs (normas `sin-rutas-absolutas.md`, `repo-publico.md`).

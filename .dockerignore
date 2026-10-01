@@ -1,0 +1,13 @@
+.venv
+.git
+.github
+.claude
+docs
+tests
+samples
+scripts
+config
+data
+*.db
+.env
+__pycache__
