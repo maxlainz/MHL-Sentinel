@@ -290,6 +290,11 @@ Sealing
 - **Elección**: (1). `sealer.request_cancel`: el job pasa a `cancelled`, el proyecto vuelve a `unsealed` o `needs_review` (conservando el motivo de revisión) y los hashes ya calculados se conservan en la caché (D28). Un trabajo parado por el horario laboral vuelve a la cola y por tanto también se puede cancelar. Abortar un trabajo en marcha queda para otro issue si hace falta.
 - 2026-10-01 (petición del owner).
 
+## D54 — Frontend: se integra la propuesta D («Bandeja») con un acabado más claro y refinado
+- **Contexto**: cuatro prototipos independientes del frontend (issue #5, bitácora 03): A parte de relevo, B tablero con mapa del archivo, C tabla única estilo media pool, D bandeja de triaje. El owner los probó en local con capturas.
+- **Elección**: D. Portada = frase de estado + solo lo que pide decisión (Seal/Cancel de un clic), resto plegado, log de actividad. Cambios pedidos antes de integrar: contenedor más ancho (menos apretado) y un acabado menos oscuro y denso: es una app profesional que no se usa en la sala de color, así que el aspecto es claro y refinado (el modo oscuro sigue al sistema, no es el predeterminado). Después, revisión adversarial y corrección antes de enseñarla de nuevo. Las ramas A, B y C se borran.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista
