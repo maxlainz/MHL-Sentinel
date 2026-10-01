@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Decidido
+- D55: `main` protegida en GitHub; todo cambio entra por PR con CI verde, releases incluidas. Norma `rama-main-protegida.md`.
 
 ## [0.4.3] - 2026-10-01 — patch: Cancel
 ### Añadido
