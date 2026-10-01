@@ -29,8 +29,14 @@ FORM_FIELDS: tuple[str, ...] = (
     "verify_interval_days",
     "scan_interval_minutes",
     "log_level",
+    "theme",
 )
 LOG_LEVELS: tuple[str, ...] = ("debug", "info", "warning", "error")
+THEMES: tuple[tuple[str, str], ...] = (  # D56
+    ("auto", "Auto (follow the system)"),
+    ("light", "Light"),
+    ("dark", "Dark"),
+)
 DAY_LABELS: tuple[tuple[str, str], ...] = tuple((d, d.capitalize()) for d in DAYS)
 
 # Which environment variable can override each form field (precedence: env > YAML).
@@ -46,6 +52,7 @@ _ENV_FOR_FIELD: dict[str, str] = {
     "verify_interval_days": "VERIFY_INTERVAL_DAYS",
     "scan_interval_minutes": "SCAN_INTERVAL_MINUTES",
     "log_level": "LOG_LEVEL",
+    "theme": "THEME",
 }
 _SPLIT = re.compile(r"[,\n]")
 
@@ -72,6 +79,7 @@ def values_from_settings(settings: Settings) -> dict[str, Any]:
         "verify_interval_days": str(settings.verify_interval_days),
         "scan_interval_minutes": str(settings.scan_interval_minutes),
         "log_level": settings.log_level,
+        "theme": settings.theme,
     }
 
 
@@ -129,6 +137,7 @@ def build_settings(
         verify_interval_days=values["verify_interval_days"],
         scan_interval_minutes=values["scan_interval_minutes"],
         log_level=values["log_level"],
+        theme=values.get("theme") or "auto",  # an old form without the field keeps auto
     )
     try:
         return Settings(**kwargs), {}

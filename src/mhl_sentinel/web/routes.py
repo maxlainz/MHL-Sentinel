@@ -128,7 +128,11 @@ def header_context(ctx: WebContext) -> dict[str, Any]:
         if project is not None:
             job_text += " " + project.name
         job_pct = views.percent(fresh)
+    projects = ctx.db.list_projects()
+    counters = views.counters(projects, status.queued_jobs)
     return {
+        "headline": views.headline(projects, status.archive_reachable),
+        "counters": counters,
         "archive_ok": status.archive_reachable,
         "working_now": status.working_now,
         "gate_open": status.gate_open,
@@ -146,11 +150,25 @@ def projects_context(ctx: WebContext) -> dict[str, Any]:
     settings = ctx.settings
     status = ctx.supervisor.status()
     projects = ctx.db.list_projects()
-    rows = [
-        views.project_view(ctx.db, p, settings, status.current_job)
-        for p in views.sorted_projects(projects)
-    ]
-    return {"projects": rows, "counters": views.counters(projects, status.queued_jobs)}
+    return {
+        "inbox": views.inbox(ctx.db, projects, settings, status.current_job, utcnow()),
+        "preview": views.INBOX_PREVIEW,
+        "counters": views.counters(projects, status.queued_jobs),
+        "archive_ok": status.archive_reachable,
+    }
+
+
+def activity_context(ctx: WebContext) -> dict[str, Any]:
+    settings = ctx.settings
+    tz = settings.tzinfo
+    now = utcnow()
+    status = ctx.supervisor.status()
+    return {
+        "activity": views.activity(ctx.db, tz, now, status.current_job),
+        "working_now": status.working_now,
+        "archive_ok": status.archive_reachable,
+        "next_change": views.fmt_when(status.next_change, tz, now),
+    }
 
 
 def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool) -> dict[str, Any]:
@@ -176,6 +194,7 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
     return {
         "p": project,
         "view": views.project_view(ctx.db, project, settings, job),
+        "sentence": views.detail_sentence(ctx.db, project, settings),
         "sealed_on": views.fmt_date(project.last_sealed_at, tz),
         "verified_on": views.fmt_date(project.last_verified_at, tz),
         "last_scan": views.fmt_datetime(project.last_scan_at, tz),
@@ -218,6 +237,7 @@ def index(request: Request) -> Response:
         status.archive_reachable,
     )
     context = {
+        **activity_context(ctx),
         **header_context(ctx),
         **projects_context(ctx),
         "strays": strays[:MAX_STRAYS_SHOWN],
@@ -234,6 +254,11 @@ def fragment_header(request: Request) -> Response:
 @router.get("/fragments/projects", response_class=HTMLResponse)
 def fragment_projects(request: Request) -> Response:
     return templates.TemplateResponse(request, "_projects.html", projects_context(ctx_of(request)))
+
+
+@router.get("/fragments/activity", response_class=HTMLResponse)
+def fragment_activity(request: Request) -> Response:
+    return templates.TemplateResponse(request, "_activity.html", activity_context(ctx_of(request)))
 
 
 @router.get("/projects/{project_id}", response_class=HTMLResponse)
@@ -263,12 +288,12 @@ def fragment_progress(request: Request, project_id: int) -> Response:
 # --- buttons ---------------------------------------------------------------------------------
 
 _ACTIONS: dict[str, tuple[Callable[..., object], str]] = {
-    "seal": (sealer.request_seal, "Seal requested: it runs in the next idle window."),
+    "seal": (sealer.request_seal, "Seal requested: it runs after working hours."),
     "ignore": (sealer.request_ignore, "Ignored: the app will leave this folder alone."),
     "unignore": (sealer.request_unignore, "Watched again: the next round checks it."),
     "accept": (
         sealer.request_accept_new_version,
-        "Accepted: the project is sealed again as it is today, in the next idle window.",
+        "Accepted: the project is sealed again as it is today, after working hours.",
     ),
     "postpone": (sealer.request_postpone, "Postponed: nothing changed."),
     "cancel": (sealer.request_cancel, "Cancelled: the project is as it was before the request."),
@@ -290,14 +315,27 @@ def project_action(request: Request, project_id: int, action: str) -> Response:
             ctx.supervisor.notify_job_queued()  # wake the hasher thread instead of waiting a tick
     except sealer.SealerError as exc:
         status_code, error, notice = 409, str(exc), ""
+    # Buttons in the inbox (main screen) come back to the inbox; the detail page to the card.
+    from_inbox = request.query_params.get("from") == "inbox"
     if not is_htmx(request):
-        return RedirectResponse(f"/projects/{project_id}", status_code=303)
-    project = _get_project(ctx, project_id)
-    context = project_context(ctx, project, with_history=False)
-    context.update(notice=notice, error=error)
-    return templates.TemplateResponse(
-        request, "_project_card.html", context, status_code=status_code
-    )
+        return RedirectResponse("/" if from_inbox else f"/projects/{project_id}", status_code=303)
+    if from_inbox:
+        context = projects_context(ctx)
+        name = _get_project(ctx, project_id).name
+        context.update(notice=f"{name}: {notice}" if notice else "", error=error)
+        response = templates.TemplateResponse(
+            request, "_projects.html", context, status_code=status_code
+        )
+    else:
+        project = _get_project(ctx, project_id)
+        context = project_context(ctx, project, with_history=False)
+        context.update(notice=notice, error=error)
+        response = templates.TemplateResponse(
+            request, "_project_card.html", context, status_code=status_code
+        )
+    # The buttons do not publish bus events: tell the headline and the activity log to refresh.
+    response.headers["HX-Trigger"] = "inbox-changed"
+    return response
 
 
 @router.post("/scan-now", response_class=HTMLResponse)
@@ -323,6 +361,7 @@ def _settings_page(request: Request, state: settings_form.FormState, code: int =
         "s": settings,
         "days": settings_form.DAY_LABELS,
         "log_levels": settings_form.LOG_LEVELS,
+        "themes": settings_form.THEMES,
         "env_overrides": settings_form.env_overrides(),
     }
     return templates.TemplateResponse(request, "settings.html", context, status_code=code)

@@ -805,11 +805,16 @@ def _legacy_problems(
     return items
 
 
+# A job that sends its project to review still ends ``done``; this log line is how the GUI's
+# activity log tells it apart from a real seal (``web.views``). Keep the two in sync.
+REVIEW_LOG_PREFIX = "needs review, nothing written: "
+
+
 def _to_review(ctx: _Ctx, reason: str, items: list[ReviewItem]) -> None:
     ctx.db.replace_review_items(ctx.project.id, items)
     ctx.db.set_state(ctx.project.id, ProjectState.NEEDS_REVIEW, review_reason=reason)
     ctx.finish(JobState.DONE)
-    ctx.log("warning", f"needs review, nothing written: {reason}")
+    ctx.log("warning", f"{REVIEW_LOG_PREFIX}{reason}")
 
 
 def _legacy_expectations(ctx: _Ctx) -> dict[str, dict[str, str]]:

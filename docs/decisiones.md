@@ -300,6 +300,12 @@ Sealing
 - **Elección**: protección de rama en GitHub (PR obligatorio, check `ci` obligatorio, rama al día, sin force-push ni borrado, también para el administrador). Sin revisor obligatorio: el owner trabaja solo y la revisión la hacen los agentes antes del PR. Las releases pasan por una rama `chore/release-vX.Y.Z` y el tag se pone sobre `main` ya integrado. Norma `rama-main-protegida.md`; `git.md`, `pull-y-push.md` y la skill `release` actualizadas.
 - 2026-10-01.
 
+## D56 — Tema de la GUI configurable (auto / light / dark, auto por defecto)
+- **Contexto**: el owner pidió un acabado claro y refinado (D54), pero su Mac está en modo oscuro, así que con «seguir al sistema» como única opción veía siempre la versión oscura.
+- **Opciones**: solo seguir al sistema; forzar siempre claro; ajuste en la GUI; conmutador en el navegador (`localStorage`).
+- **Elección**: ajuste `theme` en Ajustes → *Appearance* con tres valores, `auto` (sigue al sistema, por defecto), `light` y `dark`, guardado en `config.yaml` como el resto (D25, D36; env `MHLS_THEME`). Al ser una app de una sola persona, el ajuste vale para todos sus navegadores y no depende de cookies. La página pone `data-theme` en `<html>` solo cuando no es `auto`; funciona sin JS.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista

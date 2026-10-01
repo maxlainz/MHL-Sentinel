@@ -1,96 +1,83 @@
+{% macro act(name, label, cls="", confirm="") -%}
+<form class="inline" method="post" action="/projects/{{ p.id }}/{{ name }}"
+      hx-post="/projects/{{ p.id }}/{{ name }}" hx-target="#project-card" hx-swap="outerHTML"
+      {% if confirm %}hx-confirm="{{ confirm }}"{% endif %}>
+  <button type="submit" class="btn {{ cls }}">{{ label }}</button>
+</form>
+{%- endmacro %}
 <article id="project-card"
          hx-get="/fragments/projects/{{ p.id }}" hx-swap="outerHTML"
-         hx-trigger="sse:project.state">
-  <header>
-    <span class="light {{ view.light }}">●</span>
-    <strong>{{ p.name }}</strong>
-    <span class="muted"> · {{ view.label }}</span>
+         hx-trigger="sse:project.state, sse:job.started, sse:job.finished, sse:job.failed">
+  <header class="project-head">
+    {% if view.folder %}<p class="where">in {{ view.folder }}</p>{% endif %}
+    <h1>{{ p.name }}</h1>
+    <span class="state-pill {{ view.light }}"><span class="light {{ view.light }}{% if p.state.value == 'hashing' %} pulse-anim{% endif %}"></span>{{ view.label }}</span>
   </header>
-  <p>
-    {% if sealed_on %}Sealed {{ sealed_on }}{% else %}Not sealed yet{% endif %}
-    {% if generation_count %} · {{ generation_count }} generation{{ '' if generation_count == 1 else 's' }}{% endif %}
-    {% if p.file_count is not none %} · {{ p.file_count }} files{% endif %}
-    {% if p.total_bytes is not none %} · {{ p.total_bytes|size }}{% endif %}
-    {% if verified_on %} · verified {{ verified_on }}{% endif %}
-  </p>
-  <p>{{ view.text }}</p>
-  {% if error %}<p><mark>{{ error }}</mark></p>{% endif %}
-  {% if notice %}<p><mark>{{ notice }}</mark></p>{% endif %}
+  <p class="sentence">{{ sentence }}</p>
+  {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+  {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
 
   {% include "_progress.html" %}
 
-  {% if can_review and verification %}
-  <h3>Periodic verification{% if verification.when %} of {{ verification.when }}{% endif %}</h3>
-  <p>{{ p.review_reason.split(';', 1)[0] }}. {{ verification.ok }} file{{ '' if verification.ok == 1 else 's' }} OK.</p>
-  {% if verification.rows %}
-  <div class="overflow-auto">
-  <table>
-    <thead><tr><th>Status</th><th>File</th></tr></thead>
-    <tbody>
-      {% for r in verification.rows %}
-      <tr data-verify="{{ r.status }}"><td>{{ r.label }}</td><td class="path">{{ r.rel_path }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="decision">
+    {% if can_review %}
+    {{ act("accept", "Accept as new version", "decide") }}
+    {{ act("postpone", "Postpone", "quiet") }}
+    {% endif %}
+    {% if can_seal %}{{ act("seal", "Seal") }}{% endif %}
+    {% if can_cancel %}{{ act("cancel", "Cancel", "quiet") }}{% endif %}
+    <span class="spacer"></span>
+    {% if can_ignore %}{{ act("ignore", "Ignore", "ghost", "Ignore this folder? The app will stop watching it.") }}{% endif %}
+    {% if can_unignore %}{{ act("unignore", "Unignore", "quiet") }}{% endif %}
   </div>
-  {% endif %}
-  {% elif can_review %}
-  <h3>Changed since the last seal</h3>
-  {% if review %}
-  <div class="overflow-auto">
-  <table>
-    <thead><tr><th>Change</th><th>File</th><th>Details</th></tr></thead>
-    <tbody>
-      {% for r in review %}
-      <tr data-change="{{ r.change }}"><td>{{ r.change }}</td><td class="path">{{ r.rel_path }}</td><td>{{ r.detail }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% elif p.review_reason %}
-  <p>{{ p.review_reason }}</p>
-  {% endif %}
+  {% if can_review %}
+  <p class="footnote">Accept: the current history is kept aside and the project is sealed again
+    as it is today. Postpone: nothing changes; it stays here until you decide.</p>
+  {% elif can_cancel %}
+  <p class="footnote">Cancel takes the request back before it runs. Nothing has been written.</p>
   {% endif %}
 
-  <footer class="actions">
-    {% if can_review %}
-    <form hx-post="/projects/{{ p.id }}/accept" hx-target="#project-card" hx-swap="outerHTML"
-          method="post" action="/projects/{{ p.id }}/accept">
-      <button type="submit">Accept as new version</button>
-    </form>
-    <form hx-post="/projects/{{ p.id }}/postpone" hx-target="#project-card" hx-swap="outerHTML"
-          method="post" action="/projects/{{ p.id }}/postpone">
-      <button type="submit" class="secondary">Postpone</button>
-    </form>
+  {% if can_review and verification %}
+  <section class="panel">
+    <h2 class="label">Periodic verification{% if verification.when %} of {{ verification.when }}{% endif %}</h2>
+    <p class="hint">{{ p.review_reason.split(';', 1)[0] }}. {{ verification.ok }} file{{ '' if verification.ok == 1 else 's' }} OK.</p>
+    {% if verification.rows %}
+    <div class="scroll">
+    <table class="changes">
+      <thead><tr><th>Status</th><th>File</th></tr></thead>
+      <tbody>
+        {% for r in verification.rows %}
+        <tr data-verify="{{ r.status }}"><td>{{ r.label }}</td><td class="path">{{ r.rel_path }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
     {% endif %}
-    {% if can_seal %}
-    <form hx-post="/projects/{{ p.id }}/seal" hx-target="#project-card" hx-swap="outerHTML"
-          method="post" action="/projects/{{ p.id }}/seal">
-      <button type="submit">Seal</button>
-    </form>
+  </section>
+  {% elif can_review %}
+  <section class="panel">
+    <h2 class="label">Changed since the last seal</h2>
+    {% if review %}
+    <div class="scroll">
+    <table class="changes">
+      <thead><tr><th>Change</th><th>File</th><th>Details</th></tr></thead>
+      <tbody>
+        {% for r in review %}
+        <tr data-change="{{ r.change }}"><td>{{ r.change }}</td><td class="path">{{ r.rel_path }}</td><td>{{ r.detail }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% elif p.review_reason %}
+    <p class="hint">{{ p.review_reason }}</p>
     {% endif %}
-    {% if can_cancel %}
-    <form hx-post="/projects/{{ p.id }}/cancel" hx-target="#project-card" hx-swap="outerHTML"
-          method="post" action="/projects/{{ p.id }}/cancel">
-      <button type="submit" class="secondary">Cancel</button>
-    </form>
-    {% endif %}
-    {% if can_ignore %}
-    <form hx-post="/projects/{{ p.id }}/ignore" hx-target="#project-card" hx-swap="outerHTML"
-          hx-confirm="Ignore this folder? The app will stop watching it."
-          method="post" action="/projects/{{ p.id }}/ignore">
-      <button type="submit" class="outline secondary">Ignore</button>
-    </form>
-    {% endif %}
-    {% if can_unignore %}
-    <form hx-post="/projects/{{ p.id }}/unignore" hx-target="#project-card" hx-swap="outerHTML"
-          method="post" action="/projects/{{ p.id }}/unignore">
-      <button type="submit" class="outline">Unignore</button>
-    </form>
-    {% endif %}
-  </footer>
-  {% if can_review %}
-  <p><small class="muted">Accept: the current history is kept aside and the project is sealed
-    again as it is today. Postpone: nothing changes.</small></p>
+  </section>
   {% endif %}
+
+  <dl class="stats">
+    <div><dt>Sealed</dt><dd>{% if sealed_on %}{{ sealed_on }}{% else %}Not sealed yet{% endif %}</dd></div>
+    <div><dt>Manifest</dt><dd>{% if generation_count %}{{ generation_count }} generation{{ '' if generation_count == 1 else 's' }}{% else %}none{% endif %}</dd></div>
+    <div><dt>Content</dt><dd>{% if p.file_count is not none %}{{ p.file_count }} files{% else %}-{% endif %}{% if p.total_bytes is not none %} · {{ p.total_bytes|size }}{% endif %}</dd></div>
+    <div><dt>Verified</dt><dd>{% if verified_on %}{{ verified_on }}{% else %}not yet{% endif %}</dd></div>
+  </dl>
 </article>

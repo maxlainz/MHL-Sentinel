@@ -1,29 +1,32 @@
 {% extends "base.html" %}
 {% block title %}{{ p.name }} · MHL Sentinel{% endblock %}
+{% block nav %}<a href="/settings" class="btn small ghost">Settings</a>{% endblock %}
 {% block content %}
 <div hx-ext="sse" sse-connect="/events">
-  <nav><ul><li><a href="/">← All projects</a></li></ul></nav>
+  <p><a class="back" href="/">← Inbox</a></p>
   {% include "_project_card.html" %}
 
-  <section>
-    <h3>Manifest history</h3>
+  <section class="panel">
+    <h2 class="label">Manifest history</h2>
     {% if history.error %}
-    <p class="muted">{{ history.error|capitalize }}.</p>
+    <p class="empty">{{ history.error|capitalize }}.</p>
     {% elif history.generations %}
-    <div class="overflow-auto">
-    <table>
-      <thead><tr><th>Generation</th><th>Date</th><th>Files</th></tr></thead>
-      <tbody>
-        {% for g in history.generations %}
-        <tr><td>{{ g.number }}</td><td>{{ g.created }}</td><td>{{ g.files }}</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
+    <ol class="history">
+      {% for g in history.generations|reverse %}
+      <li data-generation="{{ g.number }}">
+        <span class="gen">Generation {{ g.number }}{% if loop.first %}<small>current</small>{% endif %}</span>
+        <span class="info"><span class="created">{{ g.created }}</span> · <span class="files">{{ g.files }}</span> file{{ '' if g.files == 1 else 's' }}{% if g.tool %} · {{ g.tool }}{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    <p class="footnote">Each generation is one ASC MHL manifest in the project's <span class="path">ascmhl</span>
+      folder. Silverstack, Hedge or any ASC MHL tool can check it.</p>
+    {% elif p.last_generation_no %}
+    <p class="empty">No <span class="path">ascmhl</span> folder found in the project right now.</p>
     {% else %}
-    <p class="muted">No manifest yet.</p>
+    <p class="empty">No manifest yet.</p>
     {% endif %}
-    {% if last_scan %}<p><small class="muted">Last checked {{ last_scan }}</small></p>{% endif %}
+    {% if last_scan %}<p class="footnote">Last checked {{ last_scan }}</p>{% endif %}
   </section>
 </div>
 {% endblock %}
