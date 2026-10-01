@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib.util
 import sys
 import time
@@ -292,6 +293,79 @@ def test_unreachable_archive_publishes_and_blocks_jobs(tmp_path: Path) -> None:
                 await sup.stop()
             kinds = [e.kind for e in drain(q)]
             assert "archive.unreachable" in kinds and "job.started" not in kinds
+
+    run(body)
+
+
+def test_cancel_aborts_the_running_manual_seal(tmp_path: Path) -> None:
+    """D57: Cancel on a running Seal ends the job ``cancelled`` and the project ``unsealed``;
+    other projects, verifications and an idle hasher are refused."""
+    archive = tmp_path / "archive"
+    project = archive / "2024" / "2024-01_CLIENTE-Z_MUCHOS"
+    for d in range(40):
+        folder = project / "02_OCF" / f"A{d:03d}"
+        folder.mkdir(parents=True)
+        for i in range(100):
+            (folder / f"clip_{i:04d}.bin").write_bytes(bytes([d, i % 256]) * 2048)
+    (archive / "2024" / "2024-02_CLIENTE-OTRO").mkdir(parents=True)
+    (archive / "2024" / "2024-02_CLIENTE-OTRO" / "a.mov").write_bytes(b"x" * 10)
+    settings = make_settings(tmp_path, archive)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            bus = EventBus(db)
+            q = bus.subscribe()
+            sup = Supervisor(db, SettingsRef(settings), bus, tick_seconds=0.1, idle_seconds=0.05)
+            await sup.start()
+            try:
+                await until(lambda: len(db.list_projects()) == 2)
+                row = db.get_project("2024/2024-01_CLIENTE-Z_MUCHOS")
+                other = db.get_project("2024/2024-02_CLIENTE-OTRO")
+                assert row is not None and other is not None
+                assert not sup.request_cancel(row.id)  # nothing running
+                job_id = sealer.request_seal(db, row.id, utcnow())
+                sup.notify_job_queued()
+
+                def hashing() -> bool:
+                    job = db.get_job(job_id)
+                    return job is not None and job.files_done > 0
+
+                await until(hashing, timeout=60)
+                assert not sup.request_cancel(other.id)
+                assert sup.request_cancel(row.id)
+                await until(lambda: sup.status().current_job is None, timeout=10)
+                job = db.get_job(job_id)
+                assert job is not None and job.state is JobState.CANCELLED
+                assert 0 < job.files_done < job.files_total == 4000
+                after = db.get_project(row.id)
+                assert after is not None and after.state is ProjectState.UNSEALED
+                assert not (project / "ascmhl").exists()
+
+                # A verification or an automatic append, if it were running, is never cancelled.
+                for kind, trigger in (
+                    (JobKind.VERIFY, Trigger.MANUAL),
+                    (JobKind.SEAL, Trigger.AUTO),
+                ):
+                    with sup._lock:
+                        sup._current_job = dataclasses.replace(job, kind=kind, trigger=trigger)
+                    try:
+                        assert not sup.request_cancel(row.id)
+                    finally:
+                        with sup._lock:
+                            sup._current_job = None
+            finally:
+                await sup.stop()
+            events = drain(q)
+            finished = [e for e in events if e.kind == "job.finished"]
+            assert [(e.payload["id"], e.payload["state"]) for e in finished] == [
+                (job_id, "cancelled")
+            ]
+            states = [
+                e.payload["state"]
+                for e in events
+                if e.kind == "project.state" and e.payload["id"] == row.id
+            ]
+            assert states[-1] == "unsealed"
 
     run(body)
 

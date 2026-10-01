@@ -35,7 +35,7 @@ from mhl_sentinel.clock import from_iso, to_iso, utcnow
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ProjectRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.discovery import discover_projects
-from mhl_sentinel.hasher import FileChanged, Gate, Stopped, hash_project
+from mhl_sentinel.hasher import FileChanged, Gate, StopFlag, Stopped, hash_project
 from mhl_sentinel.mhlwriter import (
     DEFAULT_IGNORE_PATTERNS,
     PRIMARY_HASH_FORMAT,
@@ -483,14 +483,23 @@ _STATE_AFTER_CANCEL = {
 }
 
 
+def is_cancellable(job: JobRow) -> bool:
+    """Only the owner's own requests: automatic jobs would be enqueued again next round, and a
+    verification or an append is the app's own maintenance (D53, D57)."""
+    return job.trigger is Trigger.MANUAL and job.kind in _CANCELLABLE
+
+
 def cancellable_job(db: Database, project: ProjectRow) -> JobRow | None:
-    """The manual job a Cancel button can withdraw (D53): ``queued`` project, ``seal`` or
-    ``accept_new_version`` waiting for the idle window. Automatic jobs are not offered: the
-    next round would enqueue them again."""
-    if project.state is not ProjectState.QUEUED:
+    """The manual job a Cancel button can withdraw: a ``queued`` project whose ``seal`` or
+    ``accept_new_version`` waits for the idle window (D53), or a ``hashing`` project whose manual
+    job is running, also while paused by the working hours (D57; the supervisor aborts it)."""
+    if project.state is ProjectState.QUEUED:
+        job = db.queued_job(project.id)
+    elif project.state is ProjectState.HASHING:
+        job = db.running_job(project.id)
+    else:
         return None
-    job = db.queued_job(project.id)
-    if job is None or job.trigger is not Trigger.MANUAL or job.kind not in _CANCELLABLE:
+    if job is None or not is_cancellable(job):
         return None
     return job
 
@@ -498,11 +507,15 @@ def cancellable_job(db: Database, project: ProjectRow) -> JobRow | None:
 def request_cancel(db: Database, project_id: int, now: datetime) -> int:
     """Cancel button (D53): withdraw a manual Seal/Accept that has not started (or was stopped by
     the working hours and sits in the queue again). The project goes back to the state it had
-    before the request; hashes already checkpointed (D28) are kept for a later Seal."""
+    before the request; hashes already checkpointed (D28) are kept for a later Seal. A running
+    job is only the supervisor's to abort (``Supervisor.request_cancel``, D57): touching the DB
+    here would leave the hasher thread writing over a cancelled job."""
     project = _require(db, project_id)
     job = cancellable_job(db, project)
     if job is None:
         raise SealerError(f"{project.rel_path}: nothing to cancel in state {project.state}")
+    if job.state is not JobState.QUEUED:
+        raise SealerError(f"{project.rel_path}: cancel a running job through the supervisor")
     db.set_job_state(job.id, JobState.CANCELLED, now)
     db.log(job.id, "info", "cancelled from the GUI before it ran", now)
     db.set_state(project_id, _STATE_AFTER_CANCEL[job.kind], review_reason=project.review_reason)
@@ -628,6 +641,19 @@ class _DbHashCache:
         self._db.put_hash(self._pid, rel_path, size, mtime_ns, fmt, digest, self._now())
 
 
+class _StopOrCancel:
+    """What the hasher sees as ``stop``: SIGTERM (requeue) or the Cancel button (D57)."""
+
+    __slots__ = ("_cancel", "_stop")
+
+    def __init__(self, stop: StopFlag, cancel: StopFlag | None) -> None:
+        self._stop = stop
+        self._cancel = cancel
+
+    def is_set(self) -> bool:
+        return self._stop.is_set() or (self._cancel is not None and self._cancel.is_set())
+
+
 @dataclass(slots=True)
 class _Ctx:
     db: Database
@@ -636,7 +662,7 @@ class _Ctx:
     project: ProjectRow
     root: Path
     gate: Gate
-    stop: threading.Event
+    stop: StopFlag
     now_fn: Callable[[], datetime]
     on_progress: ProgressFn | None = None
 
@@ -659,8 +685,14 @@ def run_job(
     stop: threading.Event,
     now_fn: Callable[[], datetime] = utcnow,
     on_progress: ProgressFn | None = None,
+    cancel: StopFlag | None = None,
 ) -> None:
     """Run one queued job to completion, review, requeue (``Stopped``) or failure.
+
+    ``cancel`` (the Cancel button, D57) aborts a manual ``seal``/``accept_new_version`` at the
+    next file like ``stop`` does, but the job ends ``cancelled`` and the project goes back to the
+    state it had before the request; it is ignored for any other job. If both are set, cancel
+    wins. Either way nothing is written: the generation is only written after the last file.
 
     ``on_progress(files_done, files_total, bytes_done, bytes_total)`` is called after each
     progress write to the DB (the supervisor turns it into ``job.progress`` events).
@@ -684,6 +716,8 @@ def run_job(
         db.log(job.id, "info", f"verify skipped: project is {project.state}", now_fn())
         db.set_job_state(job.id, JobState.CANCELLED, now_fn())
         return
+    if not is_cancellable(job):
+        cancel = None
     ctx = _Ctx(
         db,
         settings,
@@ -691,7 +725,7 @@ def run_job(
         project,
         settings.archive_root / project.rel_path,
         gate,
-        stop,
+        _StopOrCancel(stop, cancel),
         now_fn,
         on_progress,
     )
@@ -710,6 +744,13 @@ def run_job(
         else:
             _run_seal(ctx, accept=job.kind is JobKind.ACCEPT_NEW_VERSION)
     except Stopped:
+        if cancel is not None and cancel.is_set():  # D57: the owner took the request back
+            ctx.finish(JobState.CANCELLED)
+            db.set_state(
+                project.id, _STATE_AFTER_CANCEL[job.kind], review_reason=project.review_reason
+            )
+            ctx.log("info", "cancelled while reading; hashes already done are kept")
+            return
         db.set_job_state(job.id, JobState.QUEUED, now_fn())
         if verify:  # nothing was decided: the project is still sealed
             db.set_state(project.id, ProjectState.SEALED)
@@ -760,6 +801,11 @@ def _hash(
         ctx.db.update_job_progress(ctx.job.id, files_done, files_total, bytes_done, bytes_total)
         if ctx.on_progress is not None:
             ctx.on_progress(files_done, files_total, bytes_done, bytes_total)
+        if ctx.stop.is_set():
+            # At every file boundary, also when the next files come from the cache (D28) and the
+            # hasher would not read a byte: Cancel (D57) and SIGTERM stop before anything is
+            # written, at the latest at the next file.
+            raise Stopped
 
     progress(0, len(files), 0, sum(f.size for f in files))
     cache_cls = _FreshReadCache if fresh else _DbHashCache

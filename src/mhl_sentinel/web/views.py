@@ -493,7 +493,10 @@ def detail_sentence(db: Database, project: ProjectRow, settings: Settings) -> st
     if state is ProjectState.QUEUED:
         return "Queued. The app works on it after working hours."
     if state is ProjectState.HASHING:
-        return "Reading every file to write the manifest."
+        text = "Reading every file to write the manifest."
+        if sealer.cancellable_job(db, project) is not None:
+            text += " Cancel stops it at the next file; files already read are kept."
+        return text
     if state is ProjectState.IGNORED:
         return "Ignored. The app leaves this folder alone."
     return f"Something went wrong: {project.error or 'unknown error'}. The app retries next round."

@@ -3,6 +3,11 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- `Cancel` también para un `Seal` o `Accept as new version` que ya se está leyendo, incluso pausado por el horario laboral (#10, D57): la app para en el siguiente fichero, no escribe nada, conserva los hashes ya calculados para el próximo `Seal` y devuelve el proyecto a `unsealed` o a revisión con su motivo.
+
+### Decidido
+- D57: Cancel en marcha mediante un evento de cancelación por trabajo en el supervisor; solo `seal`/`accept` manuales, nunca verificaciones ni `append` automáticos.
 
 ## [0.5.0] - 2026-10-01 — GUI «Bandeja»
 ### Añadido

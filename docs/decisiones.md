@@ -306,6 +306,12 @@ Sealing
 - **Elección**: ajuste `theme` en Ajustes → *Appearance* con tres valores, `auto` (sigue al sistema, por defecto), `light` y `dark`, guardado en `config.yaml` como el resto (D25, D36; env `MHLS_THEME`). Al ser una app de una sola persona, el ajuste vale para todos sus navegadores y no depende de cookies. La página pone `data-theme` en `<html>` solo cuando no es `auto`; funciona sin JS.
 - 2026-10-01.
 
+## D57 — `Cancel` también en marcha
+- **Contexto**: D53 dejó fuera abortar un trabajo en marcha. Con el backlog del NAS, un `Seal` lanzado por error puede tardar horas (y quedarse en `hashing` pausado durante el horario laboral) sin forma de retirarlo; el owner lo pidió (issue #10).
+- **Opciones**: (1) abortar al siguiente fichero conservando los hashes ya hechos (D28) y devolver el proyecto a su estado anterior; (2) dejar terminar el fichero en curso y descartar también los hashes; (3) cancelar cualquier trabajo, verificaciones y `append` automáticos incluidos.
+- **Elección**: (1). El supervisor tiene un evento de cancelación por trabajo (se limpia al empezar cada uno); `Supervisor.request_cancel(project_id)` solo lo levanta si el trabajo en curso es de ese proyecto y es un `seal`/`accept_new_version` manual. El hasher ve «parar o cancelar» como una sola señal y la comprueba en cada bloque, en cada frontera de fichero (también cuando el siguiente sale de la caché) y mientras espera a que acabe el horario laboral. Al saltar: trabajo `cancelled`, proyecto a `unsealed` o a `needs_review` conservando `review_reason`, sin generación ni temporales (la generación solo se escribe tras el último fichero). Si coinciden SIGTERM y Cancel, gana Cancel. `sealer.request_cancel` sigue siendo solo para trabajos en cola y rechaza uno en marcha, para que ningún camino deje un trabajo a medio cancelar. Verificaciones y `append` automáticos nunca se cancelan.
+- 2026-10-01 (decisión del owner en el issue #10).
+
 ---
 
 ## Pendiente de entrevista
