@@ -31,6 +31,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 | `prediccion-antes-de-medir.md` | Predicción escrita antes de cada medida sobre el NAS; las cifras del research son hipótesis (D4) |
 | `subagentes.md` | Orquestar y delegar; Opus para research/diseño/revisión, Sonnet para implementación, Haiku para inventarios (D4) |
 | `git.md` | Conventional Commits, SemVer, Keep a Changelog, ramas `feat/<issue#>-slug`, sin trailers de atribución (D5, D37) |
+| `rama-main-protegida.md` | Nada entra en `main` sin PR y CI verde; protección activa en GitHub, también para releases (D55) |
 | `pull-y-push.md` | Pull al abrir, push al cerrar; qué hacer si `main` divergió (D5) |
 | `issues-abiertos.md` | Leer `gh issue list` antes de cualquier tarea (D5) |
 | `problemas-al-issue.md` | Lo que se encuentra y no se arregla, a issue (sin datos del estudio) (D5) |
@@ -79,7 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 03, `v0.4.3`)**: **MVP completo (D44)**: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 155 tests, todos los manifiestos validados por la referencia. D1–D53, H1–H19. Patch `v0.4.3`: botón `Cancel` para un Seal/Accept en cola (D53, #4). Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). **Instalado en el NAS del estudio** (2026-10-01): 95 proyectos, 32 050 ficheros, 11,8 TB detectados en ~34 s (H19); nada sellado aún. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner), #5 (rediseño del frontend: 4 propuestas en ramas `feat/5-frontend-{a,b,c,d}`, el owner elige).
+- **Estado (2026-10-01, bitácora 03, `v0.4.3`)**: **MVP completo (D44)**: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 155 tests, todos los manifiestos validados por la referencia. D1–D55, H1–H19. Patch `v0.4.3`: botón `Cancel` para un Seal/Accept en cola (D53, #4). Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). **Instalado en el NAS del estudio** (2026-10-01): 95 proyectos, 32 050 ficheros, 11,8 TB detectados en ~34 s (H19); nada sellado aún. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner), #5 (rediseño del frontend: 4 propuestas en ramas `feat/5-frontend-{a,b,c,d}`, el owner elige).
 - **Después**: elegir propuesta de frontend (#5) e integrarla; primer `Seal` de un proyecto pequeño en el NAS y medir MB/s del hasher (predicción en bitácora 02); luego el backlog de 95 proyectos a ritmo de ventanas; MediaVerify sobre la raíz (#3). Luego: plantilla Container Station probada, Apprise (D22), issue #2.
 
 ## Pendiente del owner (2026-10-01)
