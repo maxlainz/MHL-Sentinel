@@ -1,0 +1,51 @@
+[project]
+name = "mhl-sentinel"
+version = "0.0.0"
+description = "ASC MHL integrity sentinel for a NAS archive of finished projects"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Max Lainz" }]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  # D1 / norma conformidad-mhl.md: la referencia es el oráculo; subir versión es decisión del owner.
+  "ascmhl==1.2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "lxml-stubs>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mhl_sentinel"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests", "scripts"]
+[[tool.mypy.overrides]]
+module = ["ascmhl.*", "xxhash.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+  # ascmhl 1.2 usa 'gitwildmatch' (deprecado en pathspec); no es nuestro código
+  "ignore:GitWildMatchPattern:DeprecationWarning",
+]

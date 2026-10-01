@@ -1,0 +1,19 @@
+# D38 / norma ci.md: todo lo que corre aquí es un target del Makefile (make ci), así local y CI están verdes o rojos a la vez.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: make setup
+      - run: make ci

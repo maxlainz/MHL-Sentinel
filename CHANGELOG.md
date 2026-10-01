@@ -4,6 +4,15 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 ### Añadido
+- Proyecto Python (`pyproject.toml`, `uv`, Python 3.12) con `ascmhl==1.2` fijado como dependencia y oráculo (D1, D36); `mhl_sentinel.__version__` desde los metadatos del paquete.
+- `make fixtures`: generador determinista de un archivo sintético (`scripts/make_fixtures.py`, salida gitignored) con proyectos de plantilla, carpetas a ignorar, basura de macOS y dos MHL 1.x de origen (xxhash64be y md5) con hashes reales; test de determinismo.
+- Targets reales del Makefile (`setup`, `lint`, `format`, `typecheck`, `test`) sobre `uv`; `ci.yml` en push/PR (D38).
+- Skill `release` (modelo: LMT-Composer) adaptada al stack.
+- `src/mhl_sentinel/mhlwriter.py`: escritura de generaciones ASC MHL con hashes precalculados vía `mhllib`, raíz de solo referencias serializada con lxml, commit atómico (temporal + rename); 7 tests que validan cada manifiesto con `ascmhl-debug xsd-schema-check` y `verify`. XSD de la referencia (tag v1.2) copiados en `tests/xsd/`.
+### Decidido
+- D42: `mhllib` sirve para D28/D29 con escritura propia de la raíz y del commit. D43: la raíz no lleva `roothash` hasta el hito 4.
+### Medido
+- H7–H12: el escritor de la referencia siempre emite `<hashes>`; `append_multiple_format_file_hashes` está roto; `verify -dh` revienta sin `roothash` y compara contra todas las generaciones; `#recycle` sin escapar es un comentario gitignore; una referencia sin hijo corta la resolución del resto. Detalle en bitácora 01.
 - Esqueleto del repo: router `CLAUDE.md`, normas en `.claude/rules/`, hooks en `.claude/settings.json`, docs de decisiones, roadmap, contexto del archivo, dos informes de research, bitácora 00.
 - Normas `obsidian.md` y `vault-accesible.md`, skill `obsidian-vault`; sección «Notas de Obsidian clave» en el router.
 ### Decidido

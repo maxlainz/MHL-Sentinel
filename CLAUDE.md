@@ -7,15 +7,17 @@ Servicio en contenedor Docker con GUI web mínima que vigila un directorio de ar
 ## Mapa del repo
 ```
 CLAUDE.md              este router
-.claude/rules/         normas (una por archivo)        .claude/skills/   obsidian-vault (release pendiente)
+.claude/rules/         normas (una por archivo)        .claude/skills/   obsidian-vault · release
 .claude/settings.json  hooks: pull + issues al arrancar · bloqueo de rutas/IPs al escribir · push al cerrar (no-op sin remoto)
 docs/decisiones.md     ADRs D1–Dn                      docs/bitacora/    una entrada por sesión (NN-slug.md)
 docs/roadmap.md        hitos → tags v0.N.0              docs/contexto-archivo.md  el archivo real, anonimizado
 docs/research/         informes de subagentes (inglés, TL;DR en español): spec ASC MHL · arquitectura del watcher
-src/                   código (hito 1)                  tests/            pytest + fixtures sintéticos (make fixtures)
+src/mhl_sentinel/      código (mhlwriter desde hito 0)  tests/            pytest; fixtures sintéticos en tests/fixtures/archive (make fixtures, gitignored)
+.github/workflows/     ci.yml (push/PR); release.yml en hito 2    pyproject.toml · uv.lock · .python-version
 deploy/                Dockerfile, compose, plantillas NAS (hito 2)
 scripts/leak-check.sh  nada del estudio en el repo      samples/          material local, gitignored
 scripts/leak-patterns.local.txt  patrones privados del leak-check (gitignored, D40)
+scripts/make_fixtures.py  generador del archivo sintético
 Makefile · CHANGELOG.md · README.md · .env.example
 ```
 
@@ -40,7 +42,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 ## Skills (`.claude/skills/`)
 | Voy a… | Skill |
 |---|---|
-| cerrar un hito y cortar versión | `release` (pendiente de crear en hito 0, modelo: LMT-Composer) |
+| cerrar un hito y cortar versión | `release` |
 | leer el vault o escribir notas de concepto | `obsidian-vault` |
 
 ## Docs
@@ -63,21 +65,21 @@ Makefile · CHANGELOG.md · README.md · .env.example
 
 ## Comandos
 ```sh
-make ci           # leak-check + lint + typecheck + test — el gate de cada commit (código: placeholders hasta hito 1)
+make ci           # leak-check + lint + typecheck + test — el gate de cada commit
 make leak-check   # nada del estudio en el árbol (rutas, IPs, patrones privados en scripts/leak-patterns.local.txt)
-make fixtures     # archivo sintético para tests (hito 0)
+make fixtures     # archivo sintético en tests/fixtures/archive (determinista, gitignored)
 make run          # app en local sobre fixtures (hito 1)
 make docker-build # imagen local (hito 2)
-git tag -a vX.Y.Z # release: ver skill `release` (pendiente)
+git tag -a vX.Y.Z # release: ver skill `release`
 ```
-Requisitos previstos: Python ≥ 3.12, `uv`, Docker. `ascmhl` 1.2 fijado como dependencia y oráculo. Configuración local en `.env` (plantilla `.env.example`).
+Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` instala todo; `ascmhl` 1.2 fijado como dependencia y oráculo. Configuración local en `.env` (plantilla `.env.example`).
 
 ## Referencia anclada (D1)
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 01)**: entrevistas de producto (D7–D26) y técnica (D28–D41) cerradas; **primer commit en `main` y repo público `maxlainz/MHL-Sentinel`**. Decisiones clave del día: hasher propio + `mhllib`; raíz de solo referencias; xxh128; se configura el horario laboral y la app se detiene en él (L–V 09:00–19:00); `Seal` manual como uso normal, automático a los 7 días; contenedor en el NAS (QNAP x86-64); MHL 1.x de origen se verifican y heredan. Sin código todavía. Hallazgos H1–H6.
-- **Después**: hito 0 → `make fixtures` + spike `mhllib` (generación con hashes precalculados que valide con `ascmhl-debug verify` y `xsd-schema-check`) + skill `release`; cierre con tag `v0.0.1`. Luego hito 1 (ver `docs/roadmap.md`).
+- **Estado (2026-10-01, bitácora 01, `v0.0.1`)**: entrevistas cerradas (D7–D41), repo público, **hito 0 cerrado**: proyecto Python con `ascmhl==1.2`, `make fixtures`, spike `mhllib` verde (`src/mhl_sentinel/mhlwriter.py`: generación de proyecto con hashes precalculados, raíz de solo referencias, commit atómico; validado por la referencia), `make ci` real, `ci.yml`, skill `release`. D42–D43, H6–H12. Issues #1–#3.
+- **Después**: hito 1 (`v0.1.0`, núcleo sin GUI): detección por niveles, scan con snapshot SQLite, hasher con checkpoint y varios algoritmos por lectura, lector MHL 1.x de origen (D39), generación por proyecto, CLI `run-once`. Primero leer las notas de detección y operación del vault.
 
 ## Pendiente del owner (2026-10-01)
 - Fuera del repo: actualizar el protocolo del estudio (`ascmhl/` en vez de `00_MANIFEST.mhl`; xxh128; `ascmhl-debug verify`; verificación trimestral por la app; `Seal` al terminar de archivar).

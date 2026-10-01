@@ -207,6 +207,16 @@ Una entrada por decisión: contexto, opciones, elección, fecha. Nunca se borra 
 - **Elección**: tras registrar la entrevista técnica: `make leak-check`, primer commit en `main` y `gh repo create maxlainz/MHL-Sentinel --public`. Desde ahí funcionan los hooks de pull/push y los issues.
 - 2026-10-01.
 
+## D42 — Resultado del spike del hito 0: `mhllib` sirve, con escritura propia de la raíz y del commit
+- **Contexto**: D28 y D29 dependían de que la librería de `ascmhl` 1.2 aceptara hashes precalculados y pudiera escribir una raíz de solo referencias.
+- **Resultado (H7–H12)**: las generaciones de proyecto se escriben con el modelo y el escritor de `ascmhl` (`MHLGenerationCreationSession.append_file_hash`, un formato por llamada) sin que relea ningún fichero; los hashes de directorio y el `roothash` salen de `DirectoryHashContext` y coinciden con los de `ascmhl create`. La raíz de solo referencias **no** la puede escribir el escritor de la referencia (siempre emite `<hashes>`): se serializa con lxml en `src/mhl_sentinel/mhlwriter.py`; la cadena sí la escribe `ascmhl`. El `commit` es propio (temporal + fsync + rename, manifiesto antes que cadena) porque el de la librería escribe directo en la ruta final. Usa dos métodos privados de `MHLHistory`; aceptable mientras `ascmhl` esté fijado (D1). Todo valida con `xsd-schema-check` y `ascmhl-debug verify` (exit 0), con los XSD del commit del tag v1.2 copiados en `tests/xsd/`.
+- 2026-10-01, hito 0.
+
+## D43 — La raíz no lleva `roothash` por ahora
+- **Contexto**: el XSD del repo lo marca opcional y la referencia carga y verifica la raíz sin él; solo `verify -dh` revienta (H9, bug de la referencia). Derivarlo de los `roothash` de los hijos (spec §6.5.2 Nota 1) exige calcular hashes de directorio para las carpetas intermedias (años).
+- **Elección**: sin `roothash` en la raíz hasta el hito 4, donde se mide si Silverstack/Hedge lo echan en falta. Issue #3.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista

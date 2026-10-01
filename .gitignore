@@ -33,3 +33,4 @@ samples/*
 # macOS
 .DS_Store
 ._*
+tests/fixtures/archive/
