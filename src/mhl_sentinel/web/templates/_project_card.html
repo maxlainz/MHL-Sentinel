@@ -69,6 +69,12 @@
       <button type="submit">Seal</button>
     </form>
     {% endif %}
+    {% if can_cancel %}
+    <form hx-post="/projects/{{ p.id }}/cancel" hx-target="#project-card" hx-swap="outerHTML"
+          method="post" action="/projects/{{ p.id }}/cancel">
+      <button type="submit" class="secondary">Cancel</button>
+    </form>
+    {% endif %}
     {% if can_ignore %}
     <form hx-post="/projects/{{ p.id }}/ignore" hx-target="#project-card" hx-swap="outerHTML"
           hx-confirm="Ignore this folder? The app will stop watching it."

@@ -273,6 +273,19 @@ def test_seal_button_queues_through_sealer(env: Env) -> None:
     assert again.status_code == 409  # not unsealed any more
 
 
+def test_cancel_button_withdraws_a_queued_seal(env: Env) -> None:
+    pid = env.ids["unsealed"]
+    assert "Cancel" not in env.client.get(f"/projects/{pid}").text
+    r = env.client.post(f"/projects/{pid}/seal", headers=HX)
+    assert r.status_code == 200 and "/cancel" in r.text and "Cancel" in r.text
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 200 and "Cancelled" in r.text and "/cancel" not in r.text
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.UNSEALED
+    assert env.db.next_job(NOW) is None
+    assert env.client.post(f"/projects/{pid}/cancel", headers=HX).status_code == 409
+
+
 def test_accept_and_postpone(env: Env) -> None:
     pid = env.ids["needs_review"]
     r = env.client.post(f"/projects/{pid}/postpone", headers=HX)

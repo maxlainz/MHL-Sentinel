@@ -476,6 +476,40 @@ def request_seal(db: Database, project_id: int, now: datetime) -> int:
     return job_id
 
 
+_CANCELLABLE = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION})
+_STATE_AFTER_CANCEL = {
+    JobKind.SEAL: ProjectState.UNSEALED,
+    JobKind.ACCEPT_NEW_VERSION: ProjectState.NEEDS_REVIEW,
+}
+
+
+def cancellable_job(db: Database, project: ProjectRow) -> JobRow | None:
+    """The manual job a Cancel button can withdraw (D53): ``queued`` project, ``seal`` or
+    ``accept_new_version`` waiting for the idle window. Automatic jobs are not offered: the
+    next round would enqueue them again."""
+    if project.state is not ProjectState.QUEUED:
+        return None
+    job = db.queued_job(project.id)
+    if job is None or job.trigger is not Trigger.MANUAL or job.kind not in _CANCELLABLE:
+        return None
+    return job
+
+
+def request_cancel(db: Database, project_id: int, now: datetime) -> int:
+    """Cancel button (D53): withdraw a manual Seal/Accept that has not started (or was stopped by
+    the working hours and sits in the queue again). The project goes back to the state it had
+    before the request; hashes already checkpointed (D28) are kept for a later Seal."""
+    project = _require(db, project_id)
+    job = cancellable_job(db, project)
+    if job is None:
+        raise SealerError(f"{project.rel_path}: nothing to cancel in state {project.state}")
+    db.set_job_state(job.id, JobState.CANCELLED, now)
+    db.log(job.id, "info", "cancelled from the GUI before it ran", now)
+    db.set_state(project_id, _STATE_AFTER_CANCEL[job.kind], review_reason=project.review_reason)
+    log.info("%s cancelled for %s (job %d)", job.kind, project.rel_path, job.id)
+    return job.id
+
+
 def request_ignore(db: Database, project_id: int, now: datetime) -> None:
     """Ignore button (D19). Queued jobs are cancelled; refused while hashing."""
     project = _require(db, project_id)

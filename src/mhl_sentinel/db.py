@@ -711,6 +711,15 @@ class Database:
             )
             return cur.rowcount
 
+    def queued_job(self, project_id: int) -> JobRow | None:
+        """The ``queued`` job of a project (the one the hasher would pick first), if any."""
+        row = self._query_one(
+            "SELECT * FROM jobs WHERE project_id = ? AND state = ?"
+            " ORDER BY priority DESC, created_at, id LIMIT 1",
+            (project_id, JobState.QUEUED.value),
+        )
+        return JobRow.from_row(row) if row is not None else None
+
     def has_open_job(self, project_id: int | None, kind: JobKind) -> bool:
         """True if a job of ``kind`` for the project is ``queued`` or ``running``."""
         row = self._query_one(

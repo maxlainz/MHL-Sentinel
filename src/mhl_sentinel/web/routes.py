@@ -188,6 +188,7 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "job_running": job is not None and job.state.value == "running",
         "job_pct": views.percent(job),
         "can_seal": project.state is ProjectState.UNSEALED,
+        "can_cancel": sealer.cancellable_job(ctx.db, project) is not None,
         "can_review": project.state is ProjectState.NEEDS_REVIEW,
         "can_ignore": project.state not in (ProjectState.IGNORED, ProjectState.HASHING),
         "can_unignore": project.state is ProjectState.IGNORED,
@@ -270,6 +271,7 @@ _ACTIONS: dict[str, tuple[Callable[..., object], str]] = {
         "Accepted: the project is sealed again as it is today, in the next idle window.",
     ),
     "postpone": (sealer.request_postpone, "Postponed: nothing changed."),
+    "cancel": (sealer.request_cancel, "Cancelled: the project is as it was before the request."),
 }
 
 
