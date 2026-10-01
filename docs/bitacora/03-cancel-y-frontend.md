@@ -25,8 +25,11 @@
 ## `main` protegida (D55)
 El owner pidió «dejar de trabajar en main y bloquear la rama, como norma». Norma `rama-main-protegida.md`; protección activa en GitHub (PR obligatorio, check `ci`, rama al día, sin force-push ni borrado, también para el administrador); `git.md`, `pull-y-push.md` y la skill `release` actualizadas (PR #7).
 
+## Cancel en marcha (D57, `v0.5.1`)
+Entrevista de cierre: el owner solo quiso responder a una pregunta, que `Cancel` valga también para un sellado que ya lee ficheros (las demás, prioridad del NAS, backlog de 95 y notificaciones, quedan para otra sesión). Issue #10, PR #11 (Opus): señal de cancelación por trabajo en el supervisor, el hasher la ve como `stop` y aborta en el siguiente fichero (también con los hashes en caché, cosa que ahora hace igualmente SIGTERM), job `cancelled`, proyecto al estado anterior, hashes conservados; verify y append automáticos nunca. 182 tests.
+
 ## Vault
 Sin conceptos nuevos de archivo: el trabajo de la sesión es de interfaz y de workflow (cancelar un trabajo en cola, protección de rama, tema de la GUI), no de dominio.
 
 ## Siguiente paso
-Comprobar en el NAS que Watchtower ha subido `v0.5.0` (`/healthz` → `version`), primer `Seal` de un proyecto pequeño y medida de MB/s del hasher (predicción en bitácora 02), backlog de 95 proyectos a ritmo de ventanas, MediaVerify sobre la raíz (#3). Mejora pendiente de la GUI: resultado explícito del trabajo en `jobs` en vez de detectar la revisión por el texto del log.
+Entrevista pendiente: prioridad al llegar al NAS, cómo despachar el backlog de 95 (¿botón «Seal all»?), notificaciones (D22). Comprobar en el NAS que Watchtower ha subido `v0.5.1` (`/healthz` → `version`), primer `Seal` de un proyecto pequeño y medida de MB/s del hasher (predicción en bitácora 02), backlog de 95 proyectos a ritmo de ventanas, MediaVerify sobre la raíz (#3). Mejora pendiente de la GUI: resultado explícito del trabajo en `jobs` en vez de detectar la revisión por el texto del log.
