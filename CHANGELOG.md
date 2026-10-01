@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.0.1] - 2026-10-01 — Hito 0: arranque
 ### Añadido
 - Proyecto Python (`pyproject.toml`, `uv`, Python 3.12) con `ascmhl==1.2` fijado como dependencia y oráculo (D1, D36); `mhl_sentinel.__version__` desde los metadatos del paquete.
 - `make fixtures`: generador determinista de un archivo sintético (`scripts/make_fixtures.py`, salida gitignored) con proyectos de plantilla, carpetas a ignorar, basura de macOS y dos MHL 1.x de origen (xxhash64be y md5) con hashes reales; test de determinismo.
