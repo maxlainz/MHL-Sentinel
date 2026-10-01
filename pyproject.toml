@@ -1,6 +1,6 @@
 [project]
 name = "mhl-sentinel"
-version = "0.0.1"
+version = "0.1.0"
 description = "ASC MHL integrity sentinel for a NAS archive of finished projects"
 readme = "README.md"
 license = "MIT"
