@@ -33,6 +33,9 @@
   {% if can_review %}
   <p class="footnote">Accept: the current history is kept aside and the project is sealed again
     as it is today. Postpone: nothing changes; it stays here until you decide.</p>
+  {% elif can_cancel and p.state.value == 'hashing' %}
+  <p class="footnote">Cancel stops the reading at the next file. Nothing has been written; the
+    files already read are not read again on the next Seal.</p>
   {% elif can_cancel %}
   <p class="footnote">Cancel takes the request back before it runs. Nothing has been written.</p>
   {% endif %}

@@ -241,6 +241,151 @@ def test_stopped_job_goes_back_to_queue(tmp_path: Path) -> None:
     assert not (settings.archive_root / project.rel_path / "ascmhl").exists()
 
 
+# --- D57: Cancel on a running Seal/Accept ------------------------------------------------------
+
+
+def _several_files(settings: Settings, project: ProjectRow, n: int = 5) -> None:
+    folder = settings.archive_root / project.rel_path / "02_OCF"
+    folder.mkdir()
+    for i in range(n):
+        (folder / f"clip_{i}.bin").write_bytes(bytes([i]) * 1000)
+
+
+def _cached_files(db: Database, settings: Settings, project: ProjectRow) -> int:
+    root = settings.archive_root / project.rel_path
+    count = 0
+    for p in root.rglob("*"):
+        if p.is_file():
+            st = p.stat()
+            rel = p.relative_to(root).as_posix()
+            count += bool(db.get_cached_hashes(project.id, rel, st.st_size, st.st_mtime_ns))
+    return count
+
+
+def _cancel_after_first_file(cancel: threading.Event) -> sealer.ProgressFn:
+    def on_progress(files_done: int, files_total: int, bytes_done: int, bytes_total: int) -> None:
+        del files_total, bytes_done, bytes_total
+        if files_done == 1:
+            cancel.set()
+
+    return on_progress
+
+
+def test_cancel_while_reading_aborts_the_seal_and_keeps_the_hashes(tmp_path: Path) -> None:
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    _several_files(settings, project)
+    job_id = sealer.request_seal(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    sealer.run_job(
+        db,
+        settings,
+        job,
+        gate=open_gate(),
+        stop=threading.Event(),
+        cancel=cancel,
+        on_progress=_cancel_after_first_file(cancel),
+    )
+    done = db.get_job(job_id)
+    assert done is not None and done.state is JobState.CANCELLED and done.finished_at
+    assert 0 < done.files_done < done.files_total == 6
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.UNSEALED
+    assert not (settings.archive_root / project.rel_path / "ascmhl").exists()
+    assert _cached_files(db, settings, project) == 1  # checkpoint kept for the next Seal (D28)
+    assert any("cancelled while reading" in e.msg for e in db.get_job_log(job_id))
+
+
+def test_cancel_while_reading_an_accept_goes_back_to_review(tmp_path: Path) -> None:
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    sealer.request_seal(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    _several_files(settings, project)
+    db.set_state(project.id, ProjectState.NEEDS_REVIEW, review_reason="added: 02_OCF/clip_0.bin")
+    job_id = sealer.request_accept_new_version(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    stop = threading.Event()
+    stop.set()  # SIGTERM at the same time: cancel wins
+    sealer.run_job(db, settings, job, gate=open_gate(), stop=stop, cancel=cancel)
+    assert db.get_job(job_id).state is JobState.QUEUED  # type: ignore[union-attr]
+    cancel.set()
+    job = db.get_job(job_id)
+    assert job is not None
+    sealer.run_job(db, settings, job, gate=open_gate(), stop=stop, cancel=cancel)
+    assert db.get_job(job_id).state is JobState.CANCELLED  # type: ignore[union-attr]
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.NEEDS_REVIEW
+    assert after.review_reason == "added: 02_OCF/clip_0.bin"
+    assert after.last_generation_no == 1  # the history was not retired
+    history = settings.archive_root / project.rel_path / "ascmhl"
+    assert sorted(p.name for p in history.iterdir() if p.name.startswith(".")) == []
+
+
+def test_cancel_while_paused_by_working_hours(tmp_path: Path) -> None:
+    """The gate is closed (working hours): the hasher waits inside the job; Cancel ends it."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    job_id = sealer.request_seal(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    worker = threading.Thread(
+        target=sealer.run_job,
+        args=(db, settings, job),
+        kwargs={"gate": threading.Event(), "stop": threading.Event(), "cancel": cancel},
+    )
+    worker.start()
+    deadline = time.monotonic() + 10
+    while db.get_project(project.id).state is not ProjectState.HASHING:  # type: ignore[union-attr]
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    cancel.set()
+    worker.join(10)
+    assert not worker.is_alive()
+    assert db.get_job(job_id).state is JobState.CANCELLED  # type: ignore[union-attr]
+    assert db.get_project(project.id).state is ProjectState.UNSEALED  # type: ignore[union-attr]
+
+
+def test_cancel_is_ignored_for_automatic_and_verify_jobs(tmp_path: Path) -> None:
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    sealer.request_seal(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    job_id = sealer.enqueue(db, project.id, JobKind.VERIFY, Trigger.AUTO, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    cancel.set()
+    sealer.run_job(db, settings, job, gate=open_gate(), stop=threading.Event(), cancel=cancel)
+    assert db.get_job(job_id).state is JobState.DONE  # type: ignore[union-attr]
+    assert db.get_project(project.id).state is ProjectState.SEALED  # type: ignore[union-attr]
+
+
+def test_request_cancel_refuses_a_running_job(tmp_path: Path) -> None:
+    """The CLI/DB path cannot half-cancel: a running job belongs to the supervisor (D57)."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    job_id = sealer.request_seal(db, project.id, NOW)
+    db.set_job_state(job_id, JobState.RUNNING, NOW)
+    db.set_state(project.id, ProjectState.HASHING)
+    hashing = db.get_project(project.id)
+    assert hashing is not None
+    running = sealer.cancellable_job(db, hashing)
+    assert running is not None and running.id == job_id
+    with pytest.raises(sealer.SealerError, match="through the supervisor"):
+        sealer.request_cancel(db, project.id, NOW)
+
+
 # --- issue #1: orphan manifests ----------------------------------------------------------------
 
 

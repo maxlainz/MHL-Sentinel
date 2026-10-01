@@ -8,7 +8,8 @@
 - One hasher ``threading.Thread`` consumes the job queue by priority, one job and one file at a
   time (D34), only while the gate is open. Closing the gate pauses the read; ``stop()`` makes the
   current job raise ``Stopped`` at the next block, so it goes back to ``queued`` with its
-  checkpoints and no generation is written.
+  checkpoints and no generation is written. ``request_cancel(project_id)`` (the Cancel button,
+  D57) aborts the current manual Seal/Accept the same way, but the job ends ``cancelled``.
 
 Every exception inside a tick or a job is logged and published as a ``log`` event; nothing kills
 the loop or the thread.
@@ -104,6 +105,7 @@ class Supervisor:
 
         self.gate = threading.Event()  # open ⇔ outside working hours
         self.stop_event = threading.Event()
+        self._cancel_event = threading.Event()  # D57: Cancel for the current job only
         self._wake = threading.Event()  # wakes the idle hasher (new job, stop)
         self._scan_requested = threading.Event()
         self._task: asyncio.Task[None] | None = None
@@ -112,6 +114,7 @@ class Supervisor:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = threading.Lock()
         self._current_job_id: int | None = None
+        self._current_job: JobRow | None = None
         self._last_cycle_at: datetime | None = None
         self._archive_reachable: bool | None = None
         self._archive_check: threading.Thread | None = None
@@ -183,6 +186,18 @@ class Supervisor:
         """``Run scan now`` (D26): a scan at the next tick, also inside working hours."""
         self._scan_requested.set()
         self._poke_loop()
+
+    def request_cancel(self, project_id: int) -> bool:
+        """Cancel button on a running job (D57): abort the current job at the next file if it is
+        the project's manual ``seal`` or ``accept_new_version``; True if it was asked to stop.
+        Verifications and automatic jobs are never cancelled. Thread-safe."""
+        with self._lock:
+            job = self._current_job
+            if job is None or job.project_id != project_id or not sealer.is_cancellable(job):
+                return False
+            self._cancel_event.set()
+        log.info("cancel requested for job %d (%s)", job.id, job.kind)
+        return True
 
     def notify_job_queued(self) -> None:
         """Wake the idle hasher now instead of after ``idle_seconds`` (e.g. after Seal)."""
@@ -392,6 +407,8 @@ class Supervisor:
         rel_path = project.rel_path if project is not None else None
         with self._lock:
             self._current_job_id = job.id
+            self._current_job = job
+            self._cancel_event.clear()  # a Cancel meant for the previous job does not carry over
         before = self._project_states()
         self.bus.publish(
             "job.started",
@@ -433,10 +450,13 @@ class Supervisor:
                 stop=self.stop_event,
                 now_fn=self.now_fn,
                 on_progress=on_progress,
+                cancel=self._cancel_event,
             )
         finally:
             with self._lock:
                 self._current_job_id = None
+                self._current_job = None
+                self._cancel_event.clear()
             done = self.db.get_job(job.id)
             state = done.state if done is not None else JobState.FAILED
             error = done.error if done is not None else "job vanished"

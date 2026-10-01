@@ -44,12 +44,18 @@ class FakeStatus:
 class FakeSupervisor:
     state: FakeStatus = field(default_factory=FakeStatus)
     scans: int = 0
+    cancel_ok: bool = True
+    cancels: list[int] = field(default_factory=list)
 
     def notify_job_queued(self) -> None:
         self.notified = getattr(self, "notified", 0) + 1
 
     def request_scan_now(self) -> None:
         self.scans += 1
+
+    def request_cancel(self, project_id: int) -> bool:
+        self.cancels.append(project_id)
+        return self.cancel_ok
 
     def status(self) -> FakeStatus:
         return self.state
@@ -370,6 +376,36 @@ def test_progress_bar_while_hashing(env: Env) -> None:
     assert "1 of 4 files" in r.text
     assert "Sealing" in env.client.get("/fragments/header").text
     assert "reading files · 25%" in env.client.get("/").text
+
+
+def test_cancel_a_running_seal_goes_through_the_supervisor(env: Env) -> None:
+    """D57: while hashing a manual Seal the card offers Cancel; the supervisor aborts it."""
+    pid = env.ids["unsealed"]
+    job_id = env.db.enqueue_job(JobKind.SEAL, pid, Trigger.MANUAL, 130, NOW)
+    env.db.set_job_state(job_id, JobState.RUNNING, NOW)
+    env.db.set_state(pid, ProjectState.HASHING)
+    env.sup.state = FakeStatus(current_job=env.db.get_job(job_id))
+    page = env.client.get(f"/projects/{pid}").text
+    assert f'action="/projects/{pid}/cancel"' in page and "at the next file" in page
+    assert f'action="/projects/{pid}/cancel?from=inbox"' in env.client.get("/").text
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 200 and "Cancelling: the app stops at the next file." in r.text
+    assert env.sup.cancels == [pid]
+    job = env.db.get_job(job_id)
+    assert job is not None and job.state is JobState.RUNNING  # the hasher thread finishes it
+    env.sup.cancel_ok = False  # e.g. the job ended in the meantime
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 409 and "cannot be cancelled" in r.text
+
+
+def test_no_cancel_while_verifying(env: Env) -> None:
+    pid = env.ids["sealed"]
+    job_id = env.db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 10, NOW)
+    env.db.set_job_state(job_id, JobState.RUNNING, NOW)
+    env.db.set_state(pid, ProjectState.HASHING)
+    env.sup.state = FakeStatus(current_job=env.db.get_job(job_id))
+    page = env.client.get(f"/projects/{pid}").text
+    assert f'action="/projects/{pid}/cancel"' not in page and "at the next file" not in page
 
 
 def test_scan_now(env: Env) -> None:

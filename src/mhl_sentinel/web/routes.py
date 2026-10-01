@@ -310,7 +310,13 @@ def project_action(request: Request, project_id: int, action: str) -> Response:
     status_code = 200
     error = ""
     try:
-        func(ctx.db, project_id, utcnow())
+        if action == "cancel" and _get_project(ctx, project_id).state is ProjectState.HASHING:
+            # D57: a running Seal/Accept is the hasher thread's; only the supervisor aborts it.
+            if not ctx.supervisor.request_cancel(project_id):
+                raise sealer.SealerError("this job cannot be cancelled now")
+            notice = "Cancelling: the app stops at the next file."
+        else:
+            func(ctx.db, project_id, utcnow())
         if action in ("seal", "accept"):
             ctx.supervisor.notify_job_queued()  # wake the hasher thread instead of waiting a tick
     except sealer.SealerError as exc:

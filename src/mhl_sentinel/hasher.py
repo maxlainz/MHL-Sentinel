@@ -9,7 +9,6 @@ changed while being read raises ``FileChanged`` (it was not quiescent).
 from __future__ import annotations
 
 import hashlib
-import threading
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +25,12 @@ class Gate(Protocol):
     """Open (set) = reading allowed. A ``threading.Event`` satisfies it."""
 
     def wait(self, timeout: float | None = None) -> bool: ...
+
+    def is_set(self) -> bool: ...
+
+
+class StopFlag(Protocol):
+    """Set = abort. A ``threading.Event`` satisfies it; so does ``sealer``'s stop-or-cancel."""
 
     def is_set(self) -> bool: ...
 
@@ -61,7 +66,7 @@ _FACTORIES: dict[str, Callable[[], Any]] = {
 }
 
 
-def _wait_open(gate: Gate, stop: threading.Event) -> None:
+def _wait_open(gate: Gate, stop: StopFlag) -> None:
     while not gate.is_set():
         if stop.is_set():
             raise Stopped
@@ -73,7 +78,7 @@ def hash_file(
     formats: Collection[str],
     *,
     gate: Gate,
-    stop: threading.Event,
+    stop: StopFlag,
     chunk_size: int = 8 * 1024 * 1024,
 ) -> HashedFile:
     unknown = [f for f in formats if f not in _FACTORIES]
@@ -116,7 +121,7 @@ def hash_project(
     cache: HashCache,
     *,
     gate: Gate,
-    stop: threading.Event,
+    stop: StopFlag,
     progress: Callable[[int, int, int, int], None] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Hash every file for the formats ``formats_for(rel_path)`` wants, reusing the cache."""
@@ -148,7 +153,7 @@ def hash_project(
 
 
 def _hash_with_retries(
-    path: Path, formats: Collection[str], gate: Gate, stop: threading.Event
+    path: Path, formats: Collection[str], gate: Gate, stop: StopFlag
 ) -> HashedFile:
     for attempt in range(MAX_RETRIES):
         try:
