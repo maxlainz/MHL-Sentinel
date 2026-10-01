@@ -52,6 +52,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 | `docs/contexto-archivo.md` | Vas a tocar detección de proyectos, exclusiones, política ante cambios, o necesitas saber qué exige el estudio |
 | `docs/research/asc-mhl-spec-y-referencia.md` | Vas a escribir o leer manifiestos, usar `mhllib`, elegir hash, o dudas de qué hace `ascmhl` ante un cambio |
 | `docs/research/arquitectura-watcher.md` | Vas a tocar scan, scheduler, hasher, GUI, Docker o la DB |
+| `docs/arquitectura.md` | Vas a implementar o tocar cualquier módulo: contrato de módulos, estados, tablas, configuración |
 | `docs/roadmap.md` | Dudas de secuencia o de qué entra en cada hito |
 | `docs/bitacora/` | Quieres saber qué pasó en cada sesión y qué se midió (`Hn`) |
 

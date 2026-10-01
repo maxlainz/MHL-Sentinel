@@ -217,6 +217,53 @@ Una entrada por decisión: contexto, opciones, elección, fecha. Nunca se borra 
 - **Elección**: sin `roothash` en la raíz hasta el hito 4, donde se mide si Silverstack/Hedge lo echan en falta. Issue #3.
 - 2026-10-01.
 
+## D44 — MVP = hitos 1 a 4, publicado en GHCR
+- **Elección**: el owner pide seguir sin parar hasta tener en GHCR una imagen con núcleo, daemon, GUI, raíz de solo referencias y verificación periódica. Cada hito sigue cortando su tag (`v0.1.0` … `v0.4.0`). La comprobación con MediaVerify (issue #3) y hacer público el paquete en GHCR son acciones del owner.
+- 2026-10-01.
+
+## D45 — Boceto de Ajustes aprobado
+```
+Settings                                    [ Back ]
+Archive
+  Root folder      /archive   (set by the container mount)
+  Projects are  [1]  level(s) below the root
+  Ignore folders starting with   _  @  #  .
+  Exclude file types from manifests   [*.md, *.txt]
+Working hours (the app stays idle during them)
+  Days   [x]Mon [x]Tue [x]Wed [x]Thu [x]Fri [ ]Sat [ ]Sun
+  From [09:00]  to [19:00]      Time zone: Europe/Madrid
+Sealing
+  Auto-seal new projects after [168] hours without changes
+  Re-verify every project every [90] days
+▸ Advanced (collapsed)
+  Hash algorithm  xxh128 (fixed)   Scan interval [60] min   Log level [info]
+[ Save ]
+```
+- 2026-10-01.
+
+## D46 — Boceto del detalle de revisión aprobado
+```
+● AAAA-MM_CLIENTE-CAMPANA              needs review
+  Sealed 2026-03-10 · 3 generations · 142 files · 28.4 GB
+  Changed since the last seal:
+    modified   01_MASTERS/spot_30s_v2.mov        (size 1.2 GB → 1.3 GB, 2026-09-28)
+    deleted    05_DELIVERABLES/spot_30s_old.mp4
+    added      05_DELIVERABLES/spot_30s_v3.mp4   (added files are fine)
+  [ Accept as new version ]   [ Postpone ]
+  Accept: the current history is kept aside and the project is sealed again as it is today. Postpone: nothing changes.
+```
+- 2026-10-01.
+
+## D47 — Issues upstream en `ascmitc/mhl`: todavía no
+- **Elección**: los bugs H7–H12 quedan documentados en este repo y en el vault; se revisa tras el MVP (issue #2 abierto como recordatorio).
+- 2026-10-01.
+
+## D48 — Ficheros añadidos: generación parcial; lectura completa solo al sellar y al verificar
+- **Contexto**: en ASC MHL cada hash lleva `action` `original`, `verified` o `failed`. Si al añadir ficheros a un proyecto sellado escribiéramos una generación con todos los ficheros usando los hashes de la caché, marcaríamos `verified` lo que no se ha vuelto a leer. Releer todo el proyecto por cada añadido (un largo: horas) es lo que hace la referencia y lo que D28 quería evitar.
+- **Opciones**: releer todo; usar caché y marcar `verified`; generación parcial.
+- **Elección**: la generación de un `append` lista **solo los ficheros añadidos** como `original`, sin hashes de directorio ni `roothash` (la spec lo permite: la referencia lo hace con `-sf`; la completitud en `verify` es la unión de todas las generaciones). El sellado inicial y la verificación de 90 días (D23) sí leen todo y escriben generación completa. Se comprueba en tests que `ascmhl-debug verify` acepta el historial tras una generación parcial.
+- 2026-10-01, hito 1.
+
 ---
 
 ## Pendiente de entrevista
