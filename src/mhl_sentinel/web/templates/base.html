@@ -5,35 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}MHL Sentinel{% endblock %}</title>
-  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%232c8a57'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/sentinel.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/htmx-ext-sse.js" defer></script>
-  <style>
-    .light { font-size: 1.1em; line-height: 1; }
-    .light.green { color: #2e9e5b; }
-    .light.amber { color: #d99a0b; }
-    .light.red { color: #d1343b; }
-    .light.grey { color: #8a8f98; }
-    .muted { color: var(--pico-muted-color); }
-    .projects li { list-style: none; display: flex; flex-wrap: wrap; gap: .25rem .75rem;
-                   align-items: baseline; padding: .4rem 0;
-                   border-bottom: 1px solid var(--pico-muted-border-color); }
-    .projects { padding: 0; }
-    .projects .name { font-weight: 600; word-break: break-word; }
-    .projects .text { flex: 1 1 16rem; }
-    .counters { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; }
-    .counters strong { font-size: 1.25em; }
-    .actions { display: flex; flex-wrap: wrap; gap: .75rem; }
-    .actions form { margin: 0; }
-    .field-error { color: #d1343b; display: block; }
-    .path { word-break: break-all; }
-    header.status p { margin-bottom: .25rem; }
-  </style>
+  <script src="/static/sentinel.js" defer></script>
 </head>
 <body>
-  <main class="container">
+  <div class="page">
+    <header class="topbar">
+      <a class="brand" href="/">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5 3 4.5v5c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9v-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m6.8 10 2.2 2.2 4.2-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        MHL Sentinel
+      </a>
+      <nav>{% block nav %}{% endblock %}</nav>
+    </header>
     {% block content %}{% endblock %}
-  </main>
-  <footer class="container"><small class="muted">MHL Sentinel · ASC MHL</small></footer>
+    <footer class="foot">MHL Sentinel · ASC MHL manifests for the finished projects of the archive</footer>
+  </div>
 </body>
 </html>

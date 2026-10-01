@@ -1,25 +1,112 @@
-<section id="projects"
-         hx-get="/fragments/projects" hx-swap="outerHTML"
-         hx-trigger="sse:project.state, sse:cycle.finished">
-  <p class="counters">
-    <span><strong>{{ counters.projects }}</strong> projects</span>
-    <span><strong>{{ counters.needs_review }}</strong> need review</span>
-    <span><strong>{{ counters.unsealed }}</strong> without manifest</span>
-    <span><strong>{{ counters.queued }}</strong> queued</span>
-    {% if counters.errors %}<span><strong>{{ counters.errors }}</strong> with problems</span>{% endif %}
-  </p>
-  {% if projects %}
-  <ul class="projects">
-    {% for p in projects %}
-    <li data-state="{{ p.state }}">
-      <span class="light {{ p.light }}" title="{{ p.label }}">●</span>
-      <span class="name">{{ p.name }}{% if p.folder %} <small class="muted">in {{ p.folder }}</small>{% endif %}</span>
-      <span class="text">{{ p.text }}</span>
-      <a href="/projects/{{ p.id }}">View</a>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted">No projects found yet. The first round lists them.</p>
+{% macro seal_form(r) -%}
+<form class="inline" method="post" action="/projects/{{ r.view.id }}/seal?from=inbox"
+      hx-post="/projects/{{ r.view.id }}/seal?from=inbox" hx-target="#projects" hx-swap="outerHTML">
+  <button type="submit" class="btn small">Seal</button>
+</form>
+{%- endmacro %}
+{% macro item(r, cls="") -%}
+<li class="item {{ cls }}" data-state="{{ r.view.state }}">
+  <span class="light {{ r.view.light }}{% if r.view.state == 'hashing' %} pulse-anim{% endif %}" title="{{ r.view.label }}"></span>
+  <div><a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>{% if r.view.folder %} <span class="where">in {{ r.view.folder }}</span>{% endif %}</div>
+  <div class="text">{{ r.view.text }}{% if r.meta %} <span class="meta">· {{ r.meta }}</span>{% endif %}</div>
+  {% if caller is defined %}<div class="acts">{{ caller() }}</div>{% endif %}
+</li>
+{%- endmacro %}
+<div id="projects"
+     hx-get="/fragments/projects" hx-swap="outerHTML"
+     hx-trigger="sse:project.state, sse:cycle.finished">
+  {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+  {% if notice %}<p class="notice" role="status">{{ notice }}</p>{% endif %}
+
+  {% if inbox.decide %}
+  <section class="section">
+    <h2 class="label">Needs your decision <span class="count">{{ counters.needs_review + counters.errors }}</span></h2>
+    <ul class="items">
+      {% for r in inbox.decide %}
+      {% call item(r, "decide") %}
+        {% if r.view.state == "needs_review" %}
+        <a class="btn small decide" href="/projects/{{ r.view.id }}">Review changes</a>
+        {% else %}
+        <a class="btn small quiet" href="/projects/{{ r.view.id }}">Details</a>
+        {% endif %}
+      {% endcall %}
+      {% endfor %}
+    </ul>
+  </section>
   {% endif %}
-</section>
+
+  {% if inbox.unsealed %}
+  <section class="section">
+    <h2 class="label">Not sealed yet <span class="count">{{ counters.unsealed }}</span></h2>
+    <p class="hint">Seal a project when its archiving is finished. The app reads every file once,
+      after working hours, and writes its manifest.</p>
+    <ul class="items compact">
+      {% for r in inbox.unsealed[:preview] %}
+      {% call item(r) %}{{ seal_form(r) }}{% endcall %}
+      {% endfor %}
+    </ul>
+    {% if inbox.unsealed|length > preview %}
+    <details class="fold" id="fold-unsealed">
+      <summary>Show {{ inbox.unsealed|length - preview }} more not sealed</summary>
+      <ul class="items compact">
+        {% for r in inbox.unsealed[preview:] %}
+        {% call item(r) %}{{ seal_form(r) }}{% endcall %}
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if inbox.moving %}
+  <section class="section">
+    <h2 class="label">In progress <span class="count">{{ inbox.moving|length }}</span></h2>
+    <ul class="items compact">
+      {% for r in inbox.moving %}
+      {% if r.cancellable %}
+      {% call item(r) %}
+        <form class="inline" method="post" action="/projects/{{ r.view.id }}/cancel?from=inbox"
+              hx-post="/projects/{{ r.view.id }}/cancel?from=inbox" hx-target="#projects" hx-swap="outerHTML">
+          <button type="submit" class="btn small quiet">Cancel</button>
+        </form>
+      {% endcall %}
+      {% else %}
+      {{ item(r) }}
+      {% endif %}
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <section class="section">
+    <h2 class="label">Everything else</h2>
+    <div class="quiet">
+      {% if counters.projects == 0 and not inbox.ignored %}
+      <p class="big">No projects found yet.</p>
+      <p>The first round lists them.</p>
+      {% else %}
+      <p class="big"><span class="light green" aria-hidden="true"></span>
+        <span><strong>{{ inbox.quiet|length }}</strong> sealed{% if not inbox.decide and not inbox.unsealed and not inbox.moving %}, all quiet{% endif %}</span></p>
+      <p>
+        {% if inbox.next_verification %}Next periodic verification due around {{ inbox.next_verification }}.{% else %}Verification starts once a project is sealed.{% endif %}
+        {{ counters.projects }} project{{ '' if counters.projects == 1 else 's' }} watched{% if inbox.ignored %}, {{ inbox.ignored|length }} ignored{% endif %}.
+      </p>
+      <details class="fold" id="fold-all">
+        <summary>All projects</summary>
+        <input class="filter" type="search" placeholder="Filter by name" aria-label="Filter projects"
+               data-filter="all-projects" hidden>
+        <ul class="rows" id="all-projects">
+          {% for group in (inbox.decide, inbox.unsealed, inbox.moving, inbox.quiet, inbox.ignored) %}
+          {% for r in group %}
+          <li data-state="{{ r.view.state }}" data-name="{{ r.view.name }}"><span class="light {{ r.view.light }}" title="{{ r.view.label }}"></span>
+            <a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>
+            <span class="text">{% if r.view.folder %}in {{ r.view.folder }} · {% endif %}{{ r.view.text }}</span>
+          </li>
+          {% endfor %}
+          {% endfor %}
+        </ul>
+      </details>
+      {% endif %}
+    </div>
+  </section>
+</div>

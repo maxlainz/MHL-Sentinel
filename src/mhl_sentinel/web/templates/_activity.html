@@ -1,0 +1,48 @@
+<section id="activity"
+         hx-get="/fragments/activity" hx-swap="outerHTML"
+         hx-trigger="sse:job.started, sse:job.finished, sse:job.failed, sse:cycle.finished, sse:root.updated, sse:job.progress throttle:3s, inbox-changed from:body">
+  <h2 class="label">What the app is doing</h2>
+  <ol class="timeline">
+    {% for a in activity.upcoming if a.tone == "running" %}
+    <li class="running">
+      <span class="when">Now{% if working_now %} · paused{% endif %}</span>
+      <span class="what">{% if a.project_id %}<a href="/projects/{{ a.project_id }}">{{ a.text }}</a>{% else %}{{ a.text }}{% endif %}</span>
+      {% if a.pct is not none %}<div class="bar" role="progressbar" aria-valuenow="{{ a.pct }}" aria-valuemin="0" aria-valuemax="100"><i style="width: {{ a.pct }}%"></i></div>{% endif %}
+      <span class="detail">{{ a.detail }}</span>
+    </li>
+    {% endfor %}
+    <li class="gate">
+      {% if not archive_ok %}
+      <span class="when">Now</span>
+      <span class="what">Waiting for the archive to answer</span>
+      {% elif working_now %}
+      <span class="when">{% if next_change %}{{ next_change }}{% else %}Later{% endif %}</span>
+      <span class="what">Working hours end: the app starts reading</span>
+      {% else %}
+      <span class="when">{% if next_change %}Until {{ next_change }}{% else %}Now{% endif %}</span>
+      <span class="what">Outside working hours: the app may read the archive</span>
+      {% endif %}
+    </li>
+    {% set queued = activity.upcoming | selectattr("tone", "equalto", "queued") | list %}
+    {% for a in queued %}
+    <li class="queued">
+      <span class="when">{% if loop.first %}Next{% else %}Then{% endif %}</span>
+      <span class="what">{% if a.project_id %}<a href="/projects/{{ a.project_id }}">{{ a.text }}</a>{% else %}{{ a.text }}{% endif %}</span>
+    </li>
+    {% endfor %}
+    {% if activity.past %}
+    <li class="sep"><span>Earlier</span></li>
+    {% for a in activity.past %}
+    <li class="{{ a.tone }}">
+      <span class="when">{{ a.when }}</span>
+      <span class="what">{% if a.project_id %}<a href="/projects/{{ a.project_id }}">{{ a.text }}</a>{% else %}{{ a.text }}{% endif %}</span>
+      {% if a.detail %}<span class="detail">{{ a.detail }}</span>{% endif %}
+    </li>
+    {% endfor %}
+    {% elif not activity.upcoming %}
+    <li class="sep"><span>Nothing done yet</span></li>
+    {% endif %}
+  </ol>
+  <p class="aside-foot">Outside working hours the app scans, reads and verifies, one file at a time.
+    During working hours it only lists folders when you press Scan now.</p>
+</section>

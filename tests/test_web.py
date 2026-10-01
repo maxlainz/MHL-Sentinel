@@ -170,11 +170,16 @@ def test_main_page_lists_projects_with_badges_and_counters(env: Env) -> None:
     assert "sse:project.state" in html and "sse:cycle.finished" in html
     assert "Archive: <strong>OK</strong>" in html
     assert "last round 23:14" in html  # 21:14 UTC shown in Europe/Madrid
-    counters = re.sub(r"\s+", " ", html)
-    assert "<strong>3</strong> projects" in counters  # ignored ones are not counted
-    assert "<strong>1</strong> need review" in counters
-    assert "<strong>1</strong> without manifest" in counters
-    lights = re.findall(r'<li data-state="(\w+)">\s*<span class="light (\w+)"', html)
+    flat = re.sub(r"\s+", " ", html)
+    assert "1 project needs your decision." in flat  # the headline
+    assert "3 projects watched, 1 ignored" in flat  # ignored ones are not counted
+    assert 'Needs your decision <span class="count">1</span>' in flat
+    assert 'Not sealed yet <span class="count">1</span>' in flat
+    assert "Review changes" in html and 'action="/projects/' in html
+    assert re.search(r'action="/projects/\d+/seal\?from=inbox"', html)  # one-click Seal
+    assert 'id="activity"' in html and "Outside working hours" in html
+    full_list = html.split('id="all-projects"', 1)[1]
+    lights = re.findall(r'<li data-state="(\w+)"[^>]*><span class="light (\w+)"', full_list)
     assert lights == [
         ("needs_review", "red"),
         ("unsealed", "amber"),
@@ -192,7 +197,16 @@ def test_fragments(env: Env) -> None:
     assert 'id="projects"' in env.client.get("/fragments/projects").text
     header = env.client.get("/fragments/header").text
     assert 'id="status-header"' in header
-    assert re.search(r"idle window open until (\w{3} )?(\d{4}-\d\d-\d\d )?09:00", header)
+    assert re.search(r"the app works until (\w{3} )?(\d{4}-\d\d-\d\d )?09:00", header)
+    assert "inbox-changed from:body" in header  # buttons refresh the headline
+    activity = env.client.get("/fragments/activity").text
+    assert 'id="activity"' in activity and "sse:job.progress" in activity
+    env.sup.state = FakeStatus(working_now=True, archive_reachable=False)
+    header = env.client.get("/fragments/header").text
+    assert "The archive is not reachable." in header
+    assert "Working hours: the app waits until" in header
+    assert "Waiting for the archive" in env.client.get("/fragments/activity").text
+    assert env.client.get("/").status_code == 200  # degrades, does not crash
 
 
 def test_review_detail_shows_items_and_buttons(env: Env) -> None:
@@ -284,6 +298,36 @@ def test_cancel_button_withdraws_a_queued_seal(env: Env) -> None:
     assert project is not None and project.state is ProjectState.UNSEALED
     assert env.db.next_job(NOW) is None
     assert env.client.post(f"/projects/{pid}/cancel", headers=HX).status_code == 409
+
+
+def test_inbox_buttons_stay_on_the_inbox(env: Env) -> None:
+    pid = env.ids["unsealed"]
+    r = env.client.post(f"/projects/{pid}/seal?from=inbox", headers=HX)
+    assert r.status_code == 200 and 'id="projects"' in r.text
+    assert "2025-03_CLIENTE-NUEVO: Seal requested" in r.text
+    assert r.headers["HX-Trigger"] == "inbox-changed"
+    assert f'action="/projects/{pid}/cancel?from=inbox"' in r.text  # In progress, with Cancel
+    activity = env.client.get("/fragments/activity").text
+    assert "Seal 2025-03_CLIENTE-NUEVO" in activity  # next in the queue
+    r = env.client.post(f"/projects/{pid}/cancel?from=inbox")  # no JS: back to the inbox
+    assert r.status_code == 200 and r.url.path == "/"
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.UNSEALED
+    r = env.client.post(f"/projects/{pid}/cancel?from=inbox", headers=HX)
+    assert r.status_code == 409 and 'id="projects"' in r.text and "nothing to cancel" in r.text
+
+
+def test_activity_log_lists_finished_jobs(env: Env) -> None:
+    sealed = env.ids["sealed"]
+    done = env.db.enqueue_job(JobKind.SEAL, sealed, Trigger.MANUAL, 130, NOW)
+    env.db.update_job_progress(done, 142, 142, 28 * GB, 28 * GB)
+    env.db.set_job_state(done, JobState.DONE, NOW)
+    failed = env.db.enqueue_job(JobKind.VERIFY, sealed, Trigger.AUTO, 10, NOW)
+    env.db.set_job_state(failed, JobState.FAILED, NOW, error="share went away")
+    html = env.client.get("/fragments/activity").text
+    assert "Sealed 2025-01_CLIENTE-SELLADO" in html and "142 files · 28.0 GB" in html
+    assert "Could not verify 2025-01_CLIENTE-SELLADO" in html and "share went away" in html
+    assert str(env.archive) not in html
 
 
 def test_accept_and_postpone(env: Env) -> None:
@@ -440,7 +484,12 @@ def test_detail_reads_generations_from_the_history(env: Env) -> None:
     digest = xxhash.xxh128(b"a" * 10).hexdigest()
     write_project_generation(project, {"01_MASTERS/a.mov": {"xxh128": digest}})
     r = env.client.get(f"/projects/{env.ids['sealed']}")
-    assert re.search(r"<tr><td>1</td><td>\d{4}-\d\d-\d\d \d\d:\d\d</td><td>1</td></tr>", r.text)
+    assert re.search(
+        r'<li data-generation="1">\s*<span class="gen">Generation 1<small>current</small></span>'
+        r'\s*<span class="info"><span class="created">\d{4}-\d\d-\d\d \d\d:\d\d</span> · '
+        r'<span class="files">1</span> file',
+        r.text,
+    )
     assert "1 generation" in r.text
     (project / "ascmhl" / "ascmhl_chain.xml").write_text("broken")
     r = env.client.get(f"/projects/{env.ids['sealed']}")

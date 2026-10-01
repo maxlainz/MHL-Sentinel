@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from mhl_sentinel import sealer
 from mhl_sentinel.clock import from_iso
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ProjectRow
@@ -224,7 +225,7 @@ def status_text(
             f"{settings.settle_hours} h without changes"
         )
     if state is ProjectState.QUEUED:
-        return "waiting for the next idle window"
+        return "queued · runs after working hours"
     if state is ProjectState.HASHING:
         pct = percent(job)
         return "reading files" + (f" · {pct}%" if pct is not None else "")
@@ -369,3 +370,233 @@ def load_history(project_root: Path, tz: ZoneInfo) -> History:
         return History(generations=out)
     except Exception as exc:
         return History(error=f"the manifest history could not be read ({type(exc).__name__})")
+
+
+# --- inbox model (issue #5, proposal D) ------------------------------------------------------
+# The main screen is an inbox: what needs a decision, what is not sealed yet, what is moving, and
+# everything else folded into one calm "all quiet" line.
+
+
+@dataclass(slots=True)
+class InboxRow:
+    view: ProjectView
+    meta: str = ""  # "142 files · 28.4 GB"
+    when: str = ""  # sealed date, for the quiet list
+    cancellable: bool = False
+
+
+@dataclass(slots=True)
+class Inbox:
+    decide: list[InboxRow] = field(default_factory=list)  # needs review + problems (red)
+    unsealed: list[InboxRow] = field(default_factory=list)  # waiting for the owner's Seal
+    moving: list[InboxRow] = field(default_factory=list)  # queued, reading, new files
+    quiet: list[InboxRow] = field(default_factory=list)  # sealed
+    ignored: list[InboxRow] = field(default_factory=list)
+    next_verification: str = ""
+
+
+INBOX_PREVIEW = 6  # unsealed rows shown before "show N more"
+
+
+def _meta(project: ProjectRow) -> str:
+    parts = []
+    if project.file_count is not None:
+        parts.append(f"{project.file_count} file{'' if project.file_count == 1 else 's'}")
+    if project.total_bytes is not None:
+        parts.append(human_size(project.total_bytes))
+    return " · ".join(parts)
+
+
+def next_verification(projects: list[ProjectRow], settings: Settings) -> str:
+    """Earliest date a sealed project is due for its periodic re-read (D23): the oldest
+    ``last_verified_at`` (else ``last_sealed_at``) plus the interval. An estimate: the scheduler
+    staggers verifications over the nights, so one may run a little later."""
+    dates = [
+        d
+        for p in projects
+        if p.state is ProjectState.SEALED
+        and (d := _as_utc(p.last_verified_at or p.last_sealed_at)) is not None
+    ]
+    if not dates:
+        return ""
+    due = min(dates) + timedelta(days=settings.verify_interval_days)
+    return fmt_date(due, settings.tzinfo)
+
+
+def inbox(
+    db: Database, projects: list[ProjectRow], settings: Settings, current: JobRow | None
+) -> Inbox:
+    box = Inbox(next_verification=next_verification(projects, settings))
+    tz = settings.tzinfo
+    for p in sorted_projects(projects):
+        row = InboxRow(project_view(db, p, settings, current), _meta(p))
+        state = p.state
+        if state in (ProjectState.NEEDS_REVIEW, ProjectState.ERROR):
+            box.decide.append(row)
+        elif state is ProjectState.UNSEALED:
+            box.unsealed.append(row)
+        elif state is ProjectState.SEALED:
+            row.when = fmt_date(p.last_sealed_at, tz)
+            box.quiet.append(row)
+        elif state is ProjectState.IGNORED:
+            box.ignored.append(row)
+        else:
+            row.cancellable = sealer.cancellable_job(db, p) is not None
+            box.moving.append(row)
+    # What moves now goes on top: reading files, then queued, then new files settling.
+    order = {ProjectState.HASHING.value: 0, ProjectState.QUEUED.value: 1}
+    box.moving.sort(key=lambda r: (order.get(r.view.state, 2), r.view.name))
+    return box
+
+
+def detail_sentence(db: Database, project: ProjectRow, settings: Settings) -> str:
+    """One plain sentence on top of the project page: where it stands and what is expected."""
+    tz = settings.tzinfo
+    state = project.state
+    if state is ProjectState.SEALED:
+        text = f"Sealed on {fmt_date(project.last_sealed_at, tz)}. Nothing has changed since."
+        if project.last_verified_at:
+            text += f" Last verified on {fmt_date(project.last_verified_at, tz)}."
+        return text
+    if state is ProjectState.NEEDS_REVIEW:
+        if is_verification_review(project):
+            found = review_summary(db, project).removeprefix("verification: ")
+            return f"The periodic verification found problems: {found}. Decide what to do."
+        found = review_summary(db, project).removesuffix(" since the last seal")
+        return f"Files changed since the last seal ({found}). Is this the new final version?"
+    if state is ProjectState.UNSEALED:
+        text = "No manifest yet. Press Seal when the archiving of this project is finished."
+        if not project.preexisting:
+            hours = settings.settle_hours
+            text += f" If nobody does, it seals itself after {hours} h without changes."
+        return text
+    if state is ProjectState.CHANGED:
+        return (
+            "New files were added since the last seal, which is fine. They join the manifest "
+            f"after {settings.settle_hours} h without changes."
+        )
+    if state is ProjectState.QUEUED:
+        return "Queued. The app works on it after working hours."
+    if state is ProjectState.HASHING:
+        return "Reading every file to write the manifest."
+    if state is ProjectState.IGNORED:
+        return "Ignored. The app leaves this folder alone."
+    return f"Something went wrong: {project.error or 'unknown error'}. The app retries next round."
+
+
+@dataclass(slots=True)
+class Headline:
+    tone: str  # "alert" (red), "wait" (amber) or "calm"
+    text: str
+
+
+def headline(c: Counters, archive_ok: bool) -> Headline:
+    """The one sentence at the top of the main screen."""
+    if not archive_ok:
+        return Headline("alert", "The archive is not reachable.")
+    decide = c.needs_review + c.errors
+    if decide:
+        noun = "1 project needs" if decide == 1 else f"{decide} projects need"
+        return Headline("alert", f"{noun} your decision.")
+    if c.unsealed:
+        noun = "1 project is" if c.unsealed == 1 else f"{c.unsealed} projects are"
+        return Headline("wait", f"{noun} not sealed yet.")
+    if c.projects == 0:
+        return Headline("calm", "No projects found yet.")
+    return Headline("calm", "All quiet. Every project is sealed.")
+
+
+@dataclass(slots=True)
+class ActivityRow:
+    when: str
+    text: str
+    tone: str  # running, queued, done, failed, cancelled
+    project_id: int | None = None
+    detail: str = ""
+    pct: int | None = None
+
+
+@dataclass(slots=True)
+class Activity:
+    upcoming: list[ActivityRow] = field(default_factory=list)
+    past: list[ActivityRow] = field(default_factory=list)
+
+
+_DONE_LABEL: dict[JobKind, str] = {
+    JobKind.SEAL: "Sealed",
+    JobKind.APPEND: "Added new files to",
+    JobKind.ACCEPT_NEW_VERSION: "Sealed a new version of",
+    JobKind.VERIFY: "Verified",
+    JobKind.ROOT_MANIFEST: "Updated the archive manifest",
+}
+_FAILED_LABEL: dict[JobKind, str] = {
+    JobKind.SEAL: "Could not seal",
+    JobKind.APPEND: "Could not add new files to",
+    JobKind.ACCEPT_NEW_VERSION: "Could not seal a new version of",
+    JobKind.VERIFY: "Could not verify",
+    JobKind.ROOT_MANIFEST: "Could not update the archive manifest",
+}
+_QUEUED_LABEL: dict[JobKind, str] = {
+    JobKind.SEAL: "Seal",
+    JobKind.APPEND: "Add new files to",
+    JobKind.ACCEPT_NEW_VERSION: "Seal a new version of",
+    JobKind.VERIFY: "Verify",
+    JobKind.ROOT_MANIFEST: "Update the archive manifest",
+}
+
+
+def activity(
+    db: Database, tz: ZoneInfo, now: datetime, current: JobRow | None, limit: int = 8
+) -> Activity:
+    """The app's own work as a calm log, like a transfer log: what runs now, what waits in the
+    queue, and the last finished jobs. Read from ``jobs`` only; no access to the share."""
+    names = {p.id: p.name for p in db.list_projects()}
+    out = Activity()
+
+    def label(table: dict[JobKind, str], job: JobRow) -> str:
+        text = table.get(job.kind, str(job.kind))
+        if job.project_id is not None and job.project_id in names:
+            text += " " + names[job.project_id]
+        return text
+
+    jobs = db.list_jobs(limit=200)
+    if current is not None:
+        fresh = db.get_job(current.id) or current
+        jobs = [fresh, *(j for j in jobs if j.id != fresh.id)]
+    queued: list[JobRow] = []
+    for job in jobs:
+        if job.state is JobState.RUNNING:
+            if any(r.tone == "running" for r in out.upcoming):
+                continue
+            detail = (
+                f"{job.files_done} of {job.files_total} files · "
+                f"{human_size(job.bytes_done)} of {human_size(job.bytes_total)}"
+            )
+            out.upcoming.append(
+                ActivityRow(
+                    "now", label(JOB_LABEL, job), "running", job.project_id, detail, percent(job)
+                )
+            )
+        elif job.state is JobState.QUEUED:
+            queued.append(job)
+        elif len(out.past) < limit and job.finished_at:
+            when = fmt_when(job.finished_at, tz, now)
+            if job.state is JobState.DONE:
+                detail = ""
+                if job.files_total:
+                    detail = f"{job.files_total} files · {human_size(job.bytes_total)}"
+                text = label(_DONE_LABEL, job)
+                out.past.append(ActivityRow(when, text, "done", job.project_id, detail))
+            elif job.state is JobState.FAILED:
+                text = label(_FAILED_LABEL, job)
+                out.past.append(ActivityRow(when, text, "failed", job.project_id, job.error or ""))
+            else:
+                text = "Cancelled: " + label(_QUEUED_LABEL, job)
+                out.past.append(ActivityRow(when, text, "cancelled", job.project_id))
+    queued.sort(key=lambda j: (-j.priority, j.id))
+    for job in queued[:limit]:
+        text = label(_QUEUED_LABEL, job)
+        out.upcoming.append(ActivityRow("next", text, "queued", job.project_id))
+    if len(queued) > limit:
+        out.upcoming.append(ActivityRow("next", f"and {len(queued) - limit} more", "queued"))
+    return out
