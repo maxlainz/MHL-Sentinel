@@ -4,6 +4,14 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-01 — Hito 4: raíz de referencias y verificación periódica (MVP)
+### Añadido
+- Hito 4: `rootmanifest.py` (historial de solo referencias en la raíz, D29/D43/D51), trabajo `verify` (relectura completa cada 90 días escalonada, regla mtime para distinguir corrupción, generación `verified` como prueba, D8/D23) y planificador de mantenimiento; GUI con fecha de la raíz, «verified» por proyecto y tabla de resultados por fichero en revisión. 155 tests. Prueba de humo del contenedor publicado en `release.yml`.
+### Decidido
+- D51: la raíz reinicia su historial cuando una referencia deja de existir; referencia todo proyecto con historial.
+### Medido
+- H14: la referencia resuelve las referencias de todas las generaciones y revienta con un assert si alguna apunta a un manifiesto inexistente. H15: compara patrones de ignore con rutas absolutas (`/_*` no casa). H16: `verify` en la raíz da exit 21 ante un fichero suelto entre proyectos. H17: Docker Desktop de este Mac no alcanza ningún registro (proxy `http.docker.internal:3128`); la imagen se prueba en GitHub.
+
 ## [0.3.0] - 2026-10-01 — Hitos 2 y 3: daemon, Docker y GUI
 ### Añadido
 - Hito 2, daemon: `events.py` (bus entre hilos hacia SSE), `settings_ref.py`, `supervisor.py` (bucle asyncio + hilo hasher con puerta por horario laboral, D33; `Run scan now` en cualquier momento, D26; recuperación de trabajos al arrancar), `server.py` (uvicorn con SIGTERM limpio: termina el bloque, reencola y sale con 0), `mhl-sentinel serve`. Imagen `v0.1.0` publicada en GHCR por `release.yml` (amd64 + arm64) como prueba del pipeline.

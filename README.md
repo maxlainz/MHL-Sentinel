@@ -2,7 +2,7 @@
 
 Servicio en contenedor Docker, con GUI web mínima, que vigila un directorio de archivo de proyectos terminados montado desde un NAS y mantiene un historial **ASC MHL** por proyecto. **Promesa**: todo proyecto archivado tiene manifiesto; lo que hay hoy coincide bit a bit con lo archivado; no falta nada; y queda constancia fechada de cada verificación. Respeta un horario de inactividad configurable para no cargar el servidor en horas de trabajo.
 
-**TL;DR.** Estado: núcleo funcional por CLI (`mhl-sentinel run-once`), sin daemon ni GUI todavía; MVP (hitos 1–4) en curso. Ver `CHANGELOG.md`, `docs/roadmap.md` y, para trabajar en el repo, `CLAUDE.md`.
+**TL;DR.** Estado: **MVP (`v0.4.0`)**: contenedor con GUI, sellado, revisión, raíz de referencias y verificación periódica. Imagen `ghcr.io/maxlainz/mhl-sentinel`. Instalación en `deploy/README.md`. Pendiente de medir sobre un NAS real. Ver `CHANGELOG.md`, `docs/roadmap.md` y, para trabajar en el repo, `CLAUDE.md`.
 
 ## Qué es, y qué no es
 - Es un vigilante de integridad para archivos de proyectos **terminados**: pocos cambios, muchos TB, lecturas caras.
@@ -18,7 +18,10 @@ Servicio en contenedor Docker, con GUI web mínima, que vigila un directorio de 
 6. Una GUI de una sola pantalla, en inglés, para producción: estado, lista de proyectos con semáforo, revisión, `Run scan now` y ajustes.
 
 ## Instalación
-Pendiente (hito 2): imagen multi-arch (amd64, arm64) en GHCR, `docker-compose.yml` de ejemplo con volúmenes `/archive` y `/config`, y plantilla para QNAP Container Station. La GUI no lleva login: pensada para la LAN; tras un proxy con autenticación si se expone fuera.
+Imagen multi-arch (amd64, arm64) en GHCR; `deploy/docker-compose.yml` con volúmenes `/archive` y `/config`; guía para QNAP Container Station en `deploy/README.md`. La GUI no lleva login: pensada para la LAN; tras un proxy con autenticación si se expone fuera.
+
+## Desarrollo
+`make setup` · `make fixtures` · `make run` (GUI en http://localhost:8080 sobre el archivo sintético) · `make ci`.
 
 ## Cómo se trabaja
 El método (router, normas, decisiones, bitácora, entrevista antes de suponer, predicción antes de medir) está en `CLAUDE.md` y `.claude/rules/`.

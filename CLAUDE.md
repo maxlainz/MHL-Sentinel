@@ -79,9 +79,11 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 02, `v0.3.0`)**: MVP en curso (D44). **Hitos 1–3 cerrados**: núcleo, daemon (`supervisor`, `serve`, SIGTERM limpio), Docker (`deploy/`, imagen en GHCR por `release.yml`) y GUI de una pantalla (`web/`). 137 tests; probado de extremo a extremo en local sobre fixtures. D1–D50, H1–H13. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz).
-- **Después**: hito 4 (`rootmanifest.py`, trabajo `verify` escalonado, resultados en GUI) → `v0.4.0` = MVP. Luego: medir sobre el NAS real (norma `prediccion-antes-de-medir.md`), MediaVerify sobre la raíz (#3), hacer público el paquete en GHCR.
+- **Estado (2026-10-01, bitácora 02, `v0.4.0`)**: **MVP completo (D44)**: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 155 tests, todos los manifiestos validados por la referencia. D1–D51, H1–H17. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
+- **Después**: instalar en el QNAP (`deploy/README.md`), predecir y medir sobre el archivo real (bitácora 03), sellar un proyecto pequeño antes del backlog. Luego: plantilla Container Station probada, Apprise (D22), issue #2.
 
 ## Pendiente del owner (2026-10-01)
 - Fuera del repo: actualizar el protocolo del estudio (`ascmhl/` en vez de `00_MANIFEST.mhl`; xxh128; `ascmhl-debug verify`; verificación trimestral por la app; `Seal` al terminar de archivar).
 - Mantener `scripts/leak-patterns.local.txt` con nombres de clientes y hosts (hoy solo el estudio).
+- Hacer público el paquete `ghcr.io/maxlainz/mhl-sentinel` (nace privado; el token local de `gh` no tiene permisos de paquetes).
+- Abrir la raíz del archivo con Pomfort MediaVerify (issue #3).

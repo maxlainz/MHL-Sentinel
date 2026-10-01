@@ -16,5 +16,17 @@
 - `release.yml` construyó y publicó `ghcr.io/maxlainz/mhl-sentinel:0.1.0` (amd64 + arm64) al primer intento. El paquete nace privado: hacerlo público es acción del owner (el token de `gh` local no tiene `read:packages`).
 - Desvíos de contrato de ambos hitos registrados en `docs/arquitectura.md`.
 
+## Hito 4 — Raíz de referencias y verificación periódica (`v0.4.0` = MVP)
+- Opus: `rootmanifest.py`, trabajo `verify`, `schedule_maintenance`, GUI. 155 tests. La referencia acepta la raíz de solo referencias sobre carpetas de año (`info -v` y `verify` exit 0, XSD ok).
+- **H14** — `MHLHistory.load_from_path` resuelve las referencias de todas las generaciones y falla con `assert referenced_hash_list is not None` si una apunta a un manifiesto que ya no existe (tras un Accept o al desaparecer un proyecto). Reproducir: `uv run pytest -q tests/test_rootmanifest.py -k superseded`. → D51.
+- **H15** — Los patrones de ignore se comparan con rutas absolutas en la referencia: `/_*` no casa nunca; hay que usar `_*` sin anclar. Reproducir: test de patrones en `tests/test_rootmanifest.py`.
+- **H16** — Un fichero suelto entre proyectos hace que `ascmhl-debug verify <raíz>` dé exit 21 («found new file»). Reproducir: e2e con el `00_README.md` de `SIN-CATEGORIA_CLIENTE-E`. Consecuencia de D49: el archivo debe estar ordenado; la GUI lo señala como entrada fuera de sitio.
+- **H17** — Docker Desktop de este Mac no alcanza Docker Hub ni GHCR (proxy `http.docker.internal:3128`; `docker pull` se cuelga). Reproducir: `docker info --format '{{.HTTPProxy}}'` y `docker pull python:3.12-slim-bookworm`. El contenedor se prueba con el job `smoke` de `release.yml`.
+- Vault: `MHL (Media Hash List)` ampliada (H13, generación parcial, historial apartado); `Historial ASC MHL anidado` ampliada (H14, H15, H16).
+
+## Pendiente tras el MVP
+- Owner: hacer público el paquete en GHCR; abrir la raíz del archivo real con MediaVerify (issue #3); medir sobre el NAS (norma `prediccion-antes-de-medir.md`): tiempo de scan de ~100 proyectos y MB/s de hashing en el QNAP; actualizar el protocolo del estudio.
+- Repo: issue #2 (upstream, D47); plantilla QNAP probada en Container Station; notificaciones Apprise (D22).
+
 ## Siguiente paso
-Hito 4 (`v0.4.0`): `rootmanifest.py`, trabajo `verify` escalonado (90 días), resultados en la GUI.
+Instalar `v0.4.0` en el QNAP con `deploy/docker-compose.yml`, predecir y medir (bitácora 03), y pulsar `Seal` en un proyecto pequeño antes de sellar el backlog.

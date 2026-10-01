@@ -274,6 +274,11 @@ Sealing
 - **Elección**: carpeta hermana `ascmhl_superseded/<AAAA-MM-DDTHHMMSSZ>/`, excluida del manifiesto nuevo por patrón de ignore por defecto. Viaja con el proyecto y sigue siendo verificable a mano. Matiza D13: la app escribe `ascmhl/` y, solo tras un Accept, `ascmhl_superseded/`.
 - 2026-10-01, hito 1.
 
+## D51 — El historial de la raíz se reinicia cuando una referencia deja de existir
+- **Contexto**: la referencia resuelve las referencias de **todas** las generaciones de un historial y revienta (assert) si alguna apunta a un manifiesto que ya no existe (H14). Tras un `Accept as new version` (D17, D50) o cuando un proyecto desaparece, las generaciones antiguas de la raíz quedan colgando. Los manifiestos son inmutables: no se pueden reescribir.
+- **Elección**: en ese caso la raíz aparta su historial a `<raíz>/ascmhl_superseded/<fecha>/` y empieza de nuevo en 0001. La raíz referencia todo proyecto con historial (incluidos los que están en revisión o con añadidos), no solo los `sealed`, para no regenerarla en cada cambio de estado; se regenera cuando cambia el conjunto referenciado o cualquier generación hija. Lleva patrones de ignore `_*`, `@*`, `\#*`, `.*` (H15: la referencia compara con rutas absolutas, `/_*` no casa nunca). Un fichero suelto entre proyectos hace que `verify` sobre la raíz dé exit 21 (H16): consecuencia de D49, el archivo debe estar ordenado.
+- 2026-10-01, hito 4.
+
 ---
 
 ## Pendiente de entrevista
