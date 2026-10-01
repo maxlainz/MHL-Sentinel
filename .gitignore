@@ -1,0 +1,35 @@
+# Entorno local y secretos
+.env
+.venv/
+venv/
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+# Estado de ejecución local (nunca se versiona)
+config/
+data/
+*.db
+*.db-wal
+*.db-shm
+# Material del owner / del estudio (repo público: ver .claude/rules/repo-publico.md)
+scripts/leak-patterns.local.txt
+samples/*
+!samples/README.md
+*.mov
+*.mxf
+*.exr
+*.pdf
+# Worktrees de subagentes
+.claude/worktrees/
+.claude/settings.local.json
+# macOS
+.DS_Store
+._*

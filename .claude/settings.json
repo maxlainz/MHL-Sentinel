@@ -1,0 +1,67 @@
+{
+  "includeCoAuthoredBy": false,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$root\" || exit 0; git remote get-url origin >/dev/null 2>&1 || exit 0; br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); git fetch --prune --quiet 2>/dev/null || { jq -n --arg b \"$br\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"Git: no se pudo hacer fetch (¿sin red?). Norma .claude/rules/pull-y-push.md: hazlo a mano antes de empezar. Rama: \" + $b)}}'; exit 0; }; up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null) || { jq -n --arg b \"$br\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"Git: la rama \" + $b + \" no tiene upstream. Norma .claude/rules/pull-y-push.md.\")}}'; exit 0; }; ahead=$(git rev-list --count \"$up\"..HEAD); behind=$(git rev-list --count HEAD..\"$up\"); dirty=$(git status --porcelain | wc -l | tr -d ' '); if [ \"$behind\" = 0 ]; then msg=\"Git: $br al día con $up (ahead $ahead).\"; elif [ \"$ahead\" = 0 ] && [ \"$dirty\" = 0 ]; then git pull --ff-only --quiet 2>/dev/null && msg=\"Git: $br avanzada $behind commits hasta $(git rev-parse --short HEAD) (fast-forward).\" || msg=\"Git: $br está $behind commits detrás de $up y el pull --ff-only falló.\"; elif [ \"$ahead\" != 0 ]; then msg=\"Git: $br ha DIVERGIDO de $up (ahead $ahead, behind $behind). No hagas pull a secas: git cherry $up $br y decide según .claude/rules/pull-y-push.md.\"; else msg=\"Git: $br está $behind commits detrás de $up pero el árbol tiene $dirty ficheros sin commitear; no se hizo pull.\"; fi; jq -n --arg m \"$msg\" '{hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:($m + \" Norma: .claude/rules/pull-y-push.md.\")}}'",
+            "timeout": 30,
+            "statusMessage": "Trayendo el remoto…"
+          },
+          {
+            "type": "command",
+            "command": "git remote get-url origin >/dev/null 2>&1 || exit 0; gh issue list --state open --limit 30 --json number,title --jq '.[] | \"#\\(.number) \\(.title)\"' 2>/dev/null | jq -Rs 'if . == \"\" then {} else {hookSpecificOutput:{hookEventName:\"SessionStart\",additionalContext:(\"Issues abiertos de este repo. Norma: .claude/rules/issues-abiertos.md — léelos antes de empezar y cita en el plan los que afecten a la tarea.\\n\" + .)}} end'",
+            "timeout": 15,
+            "statusMessage": "Leyendo los issues abiertos…"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r \".tool_response.filePath // .tool_input.file_path // empty\" | { read -r f; case \"$f\" in \"\"|*/.env|/tmp/*|/private/tmp/*) exit 0;; esac; [ -f \"$f\" ] || exit 0; hits=$(grep -n -m 3 -E \"/Users/[A-Za-z0-9_-]|/Volumes/[A-Za-z0-9_-]|192\\.168\\.[0-9]+\\.[0-9]+\" \"$f\") || exit 0; jq -n --arg f \"$f\" --arg h \"$hits\" '{decision:\"block\",reason:(\"Ruta absoluta de usuario, share o IP en \" + $f + \" — normas .claude/rules/sin-rutas-absolutas.md y repo-publico.md: usa $HOME, /archive, /config o una variable documentada en .env.example.\\n\" + $h)}'; }",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r \".message // \\\"Claude Code te espera\\\"\" | { read -r m; osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title \"MHL Sentinel\" sound name \"Submarine\"' -e 'end run' \"$m\" >/dev/null 2>&1; }",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$root\" || exit 0; git remote get-url origin >/dev/null 2>&1 || exit 0; br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); [ -n \"$br\" ] && [ \"$br\" != HEAD ] || exit 0; if up=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null); then ahead=$(git rev-list --count \"$up\"..HEAD); [ \"$ahead\" != 0 ] || exit 0; out=$(git push --quiet 2>&1) && msg=\"Git: push de $br ($ahead commits) a $up.\" || msg=\"Git: el push de $br FALLÓ: $(echo \"$out\" | tail -2 | tr '\\n' ' ') — norma .claude/rules/pull-y-push.md.\"; else out=$(git push --quiet -u origin \"$br\" 2>&1) && msg=\"Git: push de $br con upstream nuevo en origin.\" || msg=\"Git: el push -u de $br FALLÓ: $(echo \"$out\" | tail -2 | tr '\\n' ' ') — norma .claude/rules/pull-y-push.md.\"; fi; jq -n --arg m \"$msg\" '{systemMessage:$m}'",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git push origin --delete:*)",
+      "Bash(git branch -D:*)",
+      "Bash(git branch -d:*)",
+      "Bash(git worktree remove:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh pr merge:*)"
+    ]
+  }
+}

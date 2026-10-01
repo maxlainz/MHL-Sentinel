@@ -1,0 +1,213 @@
+# Decisiones
+
+Una entrada por decisión: contexto, opciones, elección, fecha. Nunca se borra una decisión: se marca **sustituida por Dn**. Las decisiones vienen de la entrevista con el owner (norma `entrevista.md`) o de hallazgos medidos (`Hn`, en la bitácora).
+
+## D1 — Base técnica: ASC MHL con la implementación de referencia como oráculo
+- **Contexto**: el estudio exige manifiesto de checksums por proyecto archivado; el estándar vigente en postproducción es ASC MHL (spec 1.x, repo `ascmitc/mhl`, paquete PyPI `ascmhl`).
+- **Opciones**: MHL 1.x legacy (Pomfort), formato propio, ASC MHL.
+- **Elección**: ASC MHL. Todo manifiesto generado debe validar con `ascmhl`/`ascmhl-debug` (norma `conformidad-mhl.md`). Hallazgo de arranque: en `ascmhl 1.2` el subcomando `verify` solo existe en el CLI `ascmhl-debug`, no en `ascmhl` (ver bitácora 00, H1).
+- 2026-10-01.
+
+## D2 — Forma del producto: contenedor Docker con GUI mínima que vigila un directorio montado
+- **Contexto**: el archivo vive en un NAS; la app debe correr en el NAS o en un host siempre encendido, sin instalación de escritorio.
+- **Opciones**: CLI + cron, app de escritorio, contenedor con GUI web mínima.
+- **Elección**: contenedor Docker, un solo proceso, GUI web mínima para estado y configuración. Volúmenes `/archive` (el directorio vigilado) y `/config` (estado local).
+- 2026-10-01.
+
+## D3 — Repo público en GitHub desde el día 0
+- **Contexto**: el owner quiere el proyecto completamente público.
+- **Elección**: público desde el primer push. Consecuencia: norma `repo-publico.md` (nada del estudio ni de clientes entra en el repo; fixtures sintéticos; `make leak-check`).
+- 2026-10-01.
+
+## D4 — Workflow heredado de la familia de repos del owner
+- **Contexto**: el owner mantiene varios repos con el mismo método (router `CLAUDE.md`, normas en `.claude/rules/`, `docs/decisiones.md`, bitácora por sesión, subagentes, entrevista antes de suponer, predicción antes de medir).
+- **Elección**: se hereda ese método tal cual; el router se adapta al stack (Python + Docker, sin app macOS que reinstalar).
+- 2026-10-01.
+
+## D5 — Git: Conventional Commits, SemVer, Keep a Changelog, hooks pull/push
+- **Contexto**: igual que en los otros repos del owner.
+- **Elección**: ver `.claude/rules/git.md`, `pull-y-push.md`, `ci.md`. **Pendiente de confirmar en entrevista**: trailers de atribución en commits (la familia los prohíbe; el harness los pide por defecto) y si CI corre en cada push o solo en tags.
+- 2026-10-01.
+
+## D6 — Alcance funcional de la v1 (decidido por el owner antes del arranque)
+- Vigilar un directorio montado que contiene proyectos terminados, a veces bajo subcarpetas por año o mes y a veces sin categorizar.
+- Definir dónde están los proyectos por niveles de carpeta (configurable).
+- Crear un ASC MHL por proyecto; al detectar cambios, actualizarlo (nueva generación) o recrearlo.
+- Horario de inactividad configurable para no generar lecturas en el servidor en horas de trabajo.
+- Un ASC MHL en el nivel superior de la ruta de archivado que agrupe todos los proyectos.
+- 2026-10-01.
+
+
+## D7 — Audiencia: producto genérico desde el día 0
+- **Contexto**: el owner lo necesita para su archivo, pero el repo es público.
+- **Opciones**: estudio primero y público por si sirve; genérico desde el día 0; herramienta personal.
+- **Elección**: genérico. El archivo del estudio es un ejemplo de configuración, no el diseño. Toda regla que dependa de cómo archiva un estudio concreto es configurable.
+- 2026-10-01, entrevista de producto.
+
+## D8 — Promesa del producto: integridad, completitud y prueba
+- **Elección**: "Todo proyecto archivado tiene manifiesto ASC MHL; lo que hay hoy coincide bit a bit con lo archivado; no falta nada; y queda constancia fechada de cada verificación." Un fallo es cualquier desviación de esa frase. Descartadas: solo bit rot; solo manifiesto al cerrar.
+- 2026-10-01.
+
+## D9 — Política ante cambios en un proyecto cerrado
+- **Contexto**: ASC MHL no "acepta" cambios (H3). El protocolo del estudio prevé reaperturas que añaden versiones, nunca sobrescriben.
+- **Elección**: **añadir ficheros es normal**: nueva generación automática cuando el proyecto lleva un tiempo estable. **Modificar o borrar lo decide una persona**: el proyecto pasa a revisión y nada se sella hasta que producción decide (D17). Descartadas: todo manual; todo automático por reglas.
+- 2026-10-01.
+
+## D10 — Operador: producción, no técnico, mínima superficie
+- **Elección**: la GUI la usa producción. Semáforos, textos claros, acciones de un clic; lo técnico (logs, YAML, hashes) no está en la pantalla principal.
+- 2026-10-01.
+
+## D11 — GUI: una sola pantalla
+- **Elección**: cabecera de estado (archivo OK/KO, última ronda, próxima ventana), contadores (proyectos, en revisión, sin manifiesto), lista de proyectos con semáforo y fecha de sellado/verificación, y detalle al pulsar un proyecto en revisión. Botones: `Ejecutar ahora` (D26), `Ajustes` (D25). Boceto aprobado en la entrevista:
+```
+[ Archivo: OK · última ronda 02:14 · próxima ventana 22:00 ]
+[ 94 proyectos · 3 en revisión · 1 sin manifiesto ]
+  ● AAAA-MM_CLIENTE-CAMPANA   revisión: 2 ficheros modificados  [Ver]
+  ● AAAA-MM_CLIENTE-CAMPANA   sellado 2026-09-30 · verificado 2026-09-30
+[ Ejecutar ahora ]  [ Ajustes ]
+```
+- 2026-10-01.
+
+## D12 — Idioma de la GUI: solo inglés
+- **Elección**: inglés, sin i18n. Docs del repo en español (D4).
+- 2026-10-01.
+
+## D13 — Huella en el proyecto: solo `ascmhl/` según la spec
+- **Contexto**: el protocolo del estudio pide `00_MANIFEST.mhl`; la spec exige `ascmhl/` con generaciones y chain.
+- **Elección**: la app escribe únicamente `<proyecto>/ascmhl/`. El protocolo del estudio se actualiza fuera de este repo. Descartadas: mantener además un `00_MANIFEST.mhl` plano; manifiestos fuera del proyecto.
+- 2026-10-01.
+
+## D14 — La app no escribe nada más en el proyecto ni genera informes; exclusión por tipo de fichero
+- **Contexto**: el protocolo pide anotar "MHL verificado por / fecha" en el README del proyecto.
+- **Elección**: la app no toca el README ni genera informes. Para que notas humanas (README, checklists) puedan editarse sin invalidar el manifiesto, la configuración permite **excluir tipos de fichero** (p. ej. `*.md`, `*.txt`) de los manifiestos. Nota técnica: en ASC MHL los patrones de ignore solo pueden crecer (spec, Guidelines §2.4): la exclusión se fija al sellar por primera vez.
+- 2026-10-01.
+
+## D15 — Arranque sobre un archivo existente: solo los nuevos se sellan solos
+- **Contexto**: el archivo del estudio tiene ~95 proyectos sin manifiesto (H4).
+- **Elección**: los proyectos que ya existen cuando se instala la app aparecen como "sin manifiesto" y **no** se sellan automáticamente; se sellan con el botón `Sellar` (D16). Los que aparecen después de la instalación se sellan solos tras el tiempo de estabilidad. Descartadas: sellar todo lo estable automáticamente; dejar el backlog fuera de la app.
+- 2026-10-01.
+
+## D16 — Botón `Sellar` para proyectos sin manifiesto
+- **Elección**: un clic en la GUI encola el sellado para la próxima ventana. Equivale a un `create` inicial. Nada se sella sin ese clic en proyectos preexistentes.
+- 2026-10-01.
+
+## D17 — Revisión: `Aceptar como nueva versión` y `Posponer`
+- **Elección**: en un proyecto en revisión producción ve qué ficheros se modificaron o borraron y dos botones. **Aceptar como nueva versión**: la app guarda aparte el historial anterior y sella el proyecto tal como está hoy (historia nueva). **Posponer**: sigue en revisión, sin tocar nada. Descartadas: solo posponer; botón de restaurar desde snapshot (puede volver como guía, no como acción).
+- 2026-10-01.
+
+## D18 — Detección de proyectos: por niveles de carpeta, no por patrones de año o mes
+- **Contexto**: el research proponía un modo "contenedores" con regex de año/mes. El owner lo corrige.
+- **Elección**: el usuario selecciona la carpeta raíz y dice **a cuántos niveles por debajo están los proyectos**. Los niveles intermedios son transparentes, sean años, meses, clientes o lo que sean. Ejemplo: raíz = el share de archivo, "los proyectos están un nivel por debajo" → las carpetas-año se ignoran como contenedores y lo siguiente es proyecto. Sustituye la propuesta de `docs/research/arquitectura-watcher.md` §6.
+- 2026-10-01.
+
+## D19 — Exclusiones: defaults más botón `Ignorar`
+- **Elección**: por defecto se ignoran en cualquier nivel las carpetas que empiezan por `_`, `@`, `#` o `.`. Todo lo demás al nivel de proyectos aparece como proyecto; si no lo es, producción pulsa `Ignorar` y la app lo recuerda. Descartadas: solo lista en ajustes; sin excepciones.
+- 2026-10-01.
+
+## D20 — Nombre: MHL Sentinel
+- **Elección**: repo `MHL-Sentinel`, paquete `mhl-sentinel`, imagen `ghcr.io/maxlainz/mhl-sentinel`. Libre en GitHub y PyPI a 2026-10-01.
+- 2026-10-01.
+
+## D21 — Licencia: MIT
+- **Elección**: MIT, como `ascmhl` y TrimPack. Coherente con D7.
+- 2026-10-01.
+
+## D22 — Avisos: GUI en v1; externos después
+- **Elección**: la v1 muestra revisiones y corrupción en la GUI. El diseño deja un punto único de notificación para Apprise (email, ntfy, Telegram…) en una versión posterior.
+- 2026-10-01.
+
+## D23 — Verificación periódica: cada 90 días por proyecto, escalonada
+- **Elección**: cada noche se releen unos pocos proyectos; en 90 días todo el archivo ha pasado. Solo en ventanas. Descartadas: anual; continua.
+- 2026-10-01.
+
+## D24 — Segunda copia fuera del NAS: fuera de alcance
+- **Elección**: este proyecto vigila un solo directorio. La segunda copia no tiene nada que ver con él por ahora.
+- 2026-10-01.
+
+## D25 — Ajustes: todo configurable desde la GUI
+- **Contexto**: D10 pide mínima superficie.
+- **Elección**: toda la configuración se edita desde una página de Ajustes separada de la pantalla principal, con valores por defecto sensatos y lo avanzado plegado. La pantalla principal no cambia. No hace falta editar ficheros en el NAS.
+- 2026-10-01.
+
+## D26 — `Ejecutar ahora`: solo escanea
+- **Elección**: el botón refresca la lista (scan barato) fuera del horario. Sellar y verificar esperan siempre a la ventana de inactividad. Descartadas: ronda completa saltando el horario; sin botón.
+- 2026-10-01.
+
+## D27 — El vault de Obsidian es la base de conocimiento; área nueva `#archivo`
+- **Contexto**: el contrato del vault del owner (nota `Claude`) exige que toda investigación termine en notas de concepto reutilizables y que cada proyecto con repo tenga una nota readme. La investigación de arranque produjo conceptos que no son de este proyecto (historiales anidados, hashes, detección de cambios en red, quiescencia, ventanas, SQLite en red).
+- **Opciones**: área `#color` (donde vivía `MHL (Media Hash List)`), `#homelab` (corre en el NAS), área nueva.
+- **Elección**: área nueva **`#archivo`** con mapa `Archivo`; la nota `MHL (Media Hash List)` pasa a esa área y se corrige con lo verificado (H1, H2, H3). Nota de proyecto `MHL Sentinel`. Normas `obsidian.md` y `vault-accesible.md`; skill `obsidian-vault`. Documentar conceptos en el vault es condición de cierre de sesión.
+- 2026-10-01.
+
+## D28 — Generaciones: hasher propio y escritura con `mhllib`
+- **Contexto**: `ascmhl create` rehashea todo el proyecto en cada ejecución, no se puede pausar al cerrarse la ventana y escribe la generación aunque falle (research spec §2.3; H2). Un largo de 5 TB son más de 12 h de lectura.
+- **Opciones**: `ascmhl create` como subproceso; hasher propio + escritura con `mhllib`; híbrido (subproceso en hito 1, propio después).
+- **Elección**: hasher propio con checkpoint por fichero en SQLite, que se detiene en horario laboral (D33) y continúa al día siguiente; la generación se escribe al final con `mhllib` (`MHLGenerationCreationSession.append_file_hash` con hashes precalculados) en temporal y renombrado (norma `conformidad-mhl.md`). `mhllib` no es API estable: se prueba en el spike del hito 0 y todo manifiesto se valida con `ascmhl-debug verify` y `xsd-schema-check`.
+- 2026-10-01, entrevista técnica.
+
+## D29 — Manifiesto raíz: solo referencias
+- **Contexto**: la spec permite un historial padre cuyo manifiesto solo contenga `<references>` a los manifiestos de los hijos (§5.6.2 Nota 3, §6.5.2 Nota 1). La referencia solo lo produce con el atajo `-sf`, que escribe `<hashes>` vacío e inválido.
+- **Opciones**: historial de referencias en la raíz; packing list plana (`flatten`); ambos.
+- **Elección**: historial `ascmhl/` en la raíz del archivo cuyo manifiesto referencia el último manifiesto de cada proyecto (ruta + C4), sin releer ficheros; se reconstruye cuando cambia cualquier proyecto. Semántica: «estos proyectos tienen historial intacto a fecha X». Escrito con `mhllib`. Pendiente de probar en hito 4 que Silverstack/Hedge lo abren; si no, se revisa. Ver la nota `Historial ASC MHL anidado`.
+- 2026-10-01.
+
+## D30 — Hash: xxh128
+- **Contexto**: el protocolo del estudio admite xxHash64 o MD5; `ascmhl` usa xxh128 por defecto; Silverstack/Hedge/YoYotta usan xxh64.
+- **Opciones**: xxh128; xxh64 (reutilizable por Hedge al copiar); xxh128 + md5.
+- **Elección**: xxh128 en los historiales nuevos. Misma velocidad que xxh64, colisiones nulas en la práctica (renombrado por hash seguro). Donde ya exista un historial con otro algoritmo se respeta y se añade xxh128 en la misma lectura. Ver la nota `Hash no criptográfico para integridad (xxHash)`.
+- 2026-10-01.
+
+## D31 — Tiempo de estabilidad: configurable en horas, 168 h por defecto; `Seal` vale para cualquier proyecto sin manifiesto
+- **Contexto**: D15 decía que los proyectos nuevos se sellan solos «tras el tiempo de estabilidad». El owner matiza el uso real: lo normal será pulsar `Seal` a mano al terminar de archivar; el sellado automático es la red de seguridad por si alguien se olvida.
+- **Opciones**: 1 h (research); 24 h; 72 h; 168 h.
+- **Elección**: tiempo sin cambios configurable en horas en Ajustes, **168 h (7 días) por defecto**. El botón `Seal` (D16) está disponible para **todo** proyecto sin manifiesto, preexistente o nuevo en espera; pasado el plazo sin cambios, la app encola el sellado sola. Matiza D15 y D16.
+- 2026-10-01.
+
+## D32 — Dónde corre: en el NAS (QNAP x86-64, Container Station)
+- **Contexto**: en el NAS las lecturas son locales (sin SMB ni cachés de atributos); en el Mac Studio compiten con Resolve y el Mac se apaga.
+- **Elección**: contenedor en el propio NAS, un QNAP con CPU Intel/AMD (imagen amd64). Se publica igualmente para arm64 (D7). La plantilla de instalación del hito 2 se prueba primero en Container Station. Las estimaciones del research sobre SMB (`arquitectura-watcher.md` §1) dejan de ser el caso base; se mide igualmente (norma `prediccion-antes-de-medir.md`).
+- 2026-10-01.
+
+## D33 — Se configura el horario laboral, y durante él la app se detiene por completo
+- **Contexto**: el research y D6 hablaban de «ventana de inactividad» (cuándo puede trabajar la app). El owner lo invierte: lo que se configura es el **horario laboral** del estudio, y en ese horario la app no toca el servidor.
+- **Elección**: Ajustes → *Working hours*: días y franja (por defecto **lunes a viernes 09:00–19:00**, en la zona horaria `TZ`). Dentro del horario laboral no hay scan, hash ni verificación automáticos; solo la GUI y `Run scan now` (D26, scan barato explícito). Fuera del horario la app trabaja sin límite. Sustituye la terminología «quiet hours» en GUI, config y docs; el concepto de la nota `Ventana de inactividad (quiet hours)` es el mismo visto desde el complemento.
+- 2026-10-01.
+
+## D34 — Sin límite de velocidad: un lector secuencial, a tope fuera del horario
+- **Elección**: no hay throttle en bytes/s en la v1; la protección del servidor es D33. Un solo fichero a la vez (secuencial, lo que mejor trata a un RAID de discos). Si una medida (`Hn`) demuestra que hace falta, se añade un límite en Ajustes avanzados.
+- 2026-10-01.
+
+## D35 — GUI sin login, solo LAN
+- **Elección**: sin autenticación en v1, como la mayoría de apps de NAS. Se documenta cómo ponerla tras un proxy inverso con login si se expone fuera de la LAN. Descartadas: HTTP Basic opcional; login obligatorio.
+- 2026-10-01.
+
+## D36 — Stack técnico (aceptado en bloque)
+- **Elección**: Python 3.12 (`python:3.12-slim`); `uv` para dependencias; `ruff` + `mypy --strict` + `pytest`; GUI FastAPI + Jinja2 + HTMX + SSE (`sse-starlette`) + Pico.css vendorizado, sin build de Node; `sqlite3` de la librería estándar con WAL y migraciones por `user_version`, en `/config/state.db` en disco local (la app se niega a arrancar si `/config` está en un sistema de ficheros de red); configuración defaults < `/config/config.yaml` < variables de entorno con prefijo `MHLS_` (pydantic-settings), la GUI escribe el YAML; imagen multi-arch amd64 + arm64 en GHCR; PUID/PGID y `user:` soportados; `tini`; `/healthz`. Detalle en `docs/research/arquitectura-watcher.md` §3–§5. Cualquier punto se revisa si un hito lo contradice, con su `Dn`.
+- 2026-10-01.
+
+## D37 — Sin atribución en commits (confirma D5)
+- **Elección**: sin trailers `Co-Authored-By` ni `Signed-off-by`, igual que el resto de repos del owner. `includeCoAuthoredBy: false`.
+- 2026-10-01.
+
+## D38 — CI en cada push y PR, y en tags (confirma D5)
+- **Elección**: `ci.yml` (lint, tipos, tests, leak-check) en push a `main` y PRs; `release.yml` en tags `v*` construye y publica la imagen. Todo son targets del Makefile.
+- 2026-10-01.
+
+## D39 — MHL 1.x de origen: siempre se tienen en cuenta; verificar y heredar el hash al sellar
+- **Contexto**: los proyectos pueden contener manifiestos MHL 1.x (los que Silverstack/Hedge dejan al volcar tarjetas). Son de origen y tienen historial: prueban la cadena desde el rodaje. ASC MHL no los importa (research spec §5). El roadmap los daba «fuera de alcance»; el owner lo corrige.
+- **Opciones**: fuera de alcance; solo verificar; verificar y heredar; verificar, heredar y vigilar.
+- **Elección**: al sellar, la app localiza los `.mhl` 1.x dentro del proyecto, comprueba cada fichero que listan en la misma lectura que calcula el xxh128 (sin coste extra) y anota en el manifiesto nuevo el hash de origen junto al xxh128 (p. ej. `xxh64` con `action="verified"`, `md5` si es lo que trae). Si algún fichero no coincide o falta, el proyecto pasa a revisión (D9, D17) y no se sella. Cuidado con las codificaciones de 1.x (`xxhash64` little-endian vs `xxhash64be`): ver la nota `MHL (Media Hash List)`. Entra en el hito 1 (el hasher se diseña ya para varios algoritmos por lectura).
+- 2026-10-01.
+
+## D40 — El nombre del estudio no aparece en el repo
+- **Elección**: nada público. Autor: Max Lainz (LICENSE, `pyproject`). El estudio se cita como «un estudio de postproducción». El nombre va a `scripts/leak-patterns.local.txt` (gitignored) para que `make leak-check` lo bloquee.
+- 2026-10-01.
+
+## D41 — Primer commit y repo público hoy
+- **Elección**: tras registrar la entrevista técnica: `make leak-check`, primer commit en `main` y `gh repo create maxlainz/MHL-Sentinel --public`. Desde ahí funcionan los hooks de pull/push y los issues.
+- 2026-10-01.
+
+---
+
+## Pendiente de entrevista
+Nada. Las próximas preguntas salen de los hitos (bocetos de GUI del hito 3, resultado del spike del hito 0).
