@@ -14,7 +14,7 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 ### Decidido
 - D51: la raíz reinicia su historial cuando una referencia deja de existir; referencia todo proyecto con historial.
 ### Medido
-- H14: la referencia resuelve las referencias de todas las generaciones y revienta con un assert si alguna apunta a un manifiesto inexistente. H15: compara patrones de ignore con rutas absolutas (`/_*` no casa). H16: `verify` en la raíz da exit 21 ante un fichero suelto entre proyectos. H17: Docker Desktop de este Mac no alcanza ningún registro (proxy `http.docker.internal:3128`); la imagen se prueba en GitHub.
+- H14: la referencia resuelve las referencias de todas las generaciones y revienta con un assert si alguna apunta a un manifiesto inexistente. H15: compara patrones de ignore con rutas absolutas (`/_*` no casa). H16: `verify` en la raíz da exit 21 ante un fichero suelto entre proyectos. H17: Docker Desktop no respondía por permisos de macOS de VSCode (resuelto por el owner); la imagen se prueba además en GitHub.
 
 ## [0.3.0] - 2026-10-01 — Hitos 2 y 3: daemon, Docker y GUI
 ### Añadido
