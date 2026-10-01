@@ -295,6 +295,11 @@ Sealing
 - **Elección**: D. Portada = frase de estado + solo lo que pide decisión (Seal/Cancel de un clic), resto plegado, log de actividad. Cambios pedidos antes de integrar: contenedor más ancho (menos apretado) y un acabado menos oscuro y denso: es una app profesional que no se usa en la sala de color, así que el aspecto es claro y refinado (el modo oscuro sigue al sistema, no es el predeterminado). Después, revisión adversarial y corrección antes de enseñarla de nuevo. Las ramas A, B y C se borran.
 - 2026-10-01.
 
+## D55 — `main` protegida: todo entra por PR con CI verde
+- **Contexto**: hasta el MVP se commiteaba directo en `main` (permitido en D5 para el hito 0 y tolerado después). Con la app instalada en el NAS y auto-actualizable (D52), el owner pide dejar de trabajar en `main` y bloquear la rama.
+- **Elección**: protección de rama en GitHub (PR obligatorio, check `ci` obligatorio, rama al día, sin force-push ni borrado, también para el administrador). Sin revisor obligatorio: el owner trabaja solo y la revisión la hacen los agentes antes del PR. Las releases pasan por una rama `chore/release-vX.Y.Z` y el tag se pone sobre `main` ya integrado. Norma `rama-main-protegida.md`; `git.md`, `pull-y-push.md` y la skill `release` actualizadas.
+- 2026-10-01.
+
 ---
 
 ## Pendiente de entrevista

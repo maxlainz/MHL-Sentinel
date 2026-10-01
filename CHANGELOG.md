@@ -9,6 +9,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 ### Corregido
 - Revisión adversarial de la GUI (#5): el titular ya no dice «Every project is sealed» con proyectos en cola o leyéndose; el log marca en rojo las verificaciones con problemas y los sellados que acabaron en revisión; «Earlier» se ordena por hora de fin; la ficha se refresca al empezar y terminar un trabajo; el filtro conserva foco y cursor en los refrescos; la fecha de verificación vencida se anuncia como tal; mismo criterio cuando todo está ignorado.
 
+### Decidido
+- D55: `main` protegida en GitHub; todo cambio entra por PR con CI verde, releases incluidas. Norma `rama-main-protegida.md`.
+
 ## [0.4.3] - 2026-10-01 — patch: Cancel
 ### Añadido
 - Botón `Cancel` en la tarjeta del proyecto: retira un `Seal` o `Accept as new version` que espera en cola y devuelve el proyecto a su estado anterior (D53, #4). `POST /projects/{id}/cancel`.
