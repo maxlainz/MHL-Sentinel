@@ -3,11 +3,15 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Cambiado
+- GUI nueva «Bandeja», la propuesta D elegida por el owner (D54, #5): pantalla principal como bandeja (frase de estado · decidir · sin sellar · en marcha · todo lo demás plegado), `Seal` y `Cancel` de un clic en la bandeja (`?from=inbox`), log de actividad (`GET /fragments/activity`), detalle con frase de estado e historial en línea de tiempo. Acabado claro y cálido, contenedor de hasta 1440 px, modo oscuro solo si el sistema lo pide, textos con contraste AA. Hoja y JS propios; se retira Pico.css. Documento en `docs/propuestas/frontend-D.md`.
+
+### Corregido
+- Revisión adversarial de la GUI (#5): el titular ya no dice «Every project is sealed» con proyectos en cola o leyéndose; el log marca en rojo las verificaciones con problemas y los sellados que acabaron en revisión; «Earlier» se ordena por hora de fin; la ficha se refresca al empezar y terminar un trabajo; el filtro conserva foco y cursor en los refrescos; la fecha de verificación vencida se anuncia como tal; mismo criterio cuando todo está ignorado.
 
 ## [0.4.3] - 2026-10-01 — patch: Cancel
 ### Añadido
 - Botón `Cancel` en la tarjeta del proyecto: retira un `Seal` o `Accept as new version` que espera en cola y devuelve el proyecto a su estado anterior (D53, #4). `POST /projects/{id}/cancel`.
-- Propuesta D de GUI, «Bandeja» (#5, pendiente de elección del owner): pantalla principal como bandeja (decidir · sin sellar · en marcha · todo lo demás plegado), `Seal` y `Cancel` de un clic en la bandeja (`?from=inbox`), log de actividad (`GET /fragments/activity`), detalle con frase de estado e historial en línea de tiempo. Hoja y JS propios; se retira Pico.css. Documento en `docs/propuestas/frontend-D.md`.
 
 ### Decidido
 - D53: solo se cancelan trabajos manuales en cola; los automáticos no (el siguiente ciclo los reencolaría) y los que están en marcha tampoco.
