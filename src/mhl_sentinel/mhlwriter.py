@@ -53,13 +53,25 @@ DEFAULT_IGNORE_PATTERNS: tuple[str, ...] = (
     "@eaDir",
     r"\#recycle",
     "ascmhl/",
+    "ascmhl_superseded/",
 )
+
+# Where "Accept as new version" (D17) puts the previous history of a project:
+# <project>/ascmhl_superseded/<YYYY-MM-DDTHHMMSSZ>/. It cannot live inside
+# ascmhl/: ascmhl 1.2 walks ascmhl/ recursively and tries to load every *.mhl
+# it finds as a generation of the current history (tests/test_sealer.py).
+SUPERSEDED_DIR = "ascmhl_superseded"
 
 PRIMARY_HASH_FORMAT = "xxh128"  # D30
 
 
 class MHLWriteError(RuntimeError):
     """The generation was not written; the history on disk is unchanged."""
+
+
+class MHLReviewError(MHLWriteError):
+    """Not written because the tree disagrees with the history (hash mismatch or files
+    recorded in the history are missing): a review case (D9, D17), not a bug."""
 
 
 def write_project_generation(
@@ -169,9 +181,9 @@ def write_project_generation(
         - seen_dirs
     )  # the history also records directories
     if missing:
-        raise MHLWriteError(f"files recorded in the history are missing: {sorted(missing)}")
+        raise MHLReviewError(f"files recorded in the history are missing: {sorted(missing)}")
     if failures:
-        raise MHLWriteError(f"hash mismatch (review, not a generation): {failures}")
+        raise MHLReviewError(f"hash mismatch (review, not a generation): {failures}")
 
     return _finish(history, session, tool_version)
 
@@ -259,7 +271,7 @@ def _write_partial(
             )
         )
     if failures:
-        raise MHLWriteError(f"hash mismatch (review, not a generation): {failures}")
+        raise MHLReviewError(f"hash mismatch (review, not a generation): {failures}")
     return _finish(history, session, tool_version)
 
 

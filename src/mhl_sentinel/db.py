@@ -680,6 +680,15 @@ class Database:
             )
             return cur.rowcount
 
+    def cancel_queued_jobs(self, project_id: int, now: datetime) -> int:
+        """Cancel every ``queued`` job of a project (e.g. the project was ignored)."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET state = ?, finished_at = ? WHERE project_id = ? AND state = ?",
+                (JobState.CANCELLED.value, to_iso(now), project_id, JobState.QUEUED.value),
+            )
+            return cur.rowcount
+
     def list_jobs(self, limit: int = 50) -> list[JobRow]:
         """Most recent first."""
         rows = self._query("SELECT * FROM jobs ORDER BY id DESC LIMIT ?", (limit,))

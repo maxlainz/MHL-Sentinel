@@ -3,6 +3,13 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- Hito 1, núcleo sin GUI: `config.py` (defaults < YAML < env `MHLS_`, horario laboral y zona horaria), `db.py` (SQLite WAL, rechazo de sistemas de ficheros de red), `schedule.py`, `discovery.py` (niveles, D18/D19/D49), `scanner.py` (snapshot y diff con regla de estabilidad), `legacy_mhl.py` (MHL 1.x con normalización de `xxhash64`), `hasher.py` (un lector, pausa/parada, caché por fichero), `sealer.py` (máquina de estados, seal/append/accept, comprobación y herencia de hashes legacy, manifiestos huérfanos), CLI `mhl-sentinel run-once|projects|settings`. 105 tests, e2e sobre fixtures validado por `ascmhl-debug verify`.
+- Empaquetado para el hito 2: `deploy/Dockerfile` multi-stage, `entrypoint.sh` PUID/PGID, `docker-compose.yml`, guía QNAP, `release.yml` (GHCR multi-arch), assets de GUI vendorizados (Pico 2.1.1, htmx 2.0.11).
+### Decidido
+- D44–D50: MVP hasta el hito 4; bocetos de Ajustes y revisión; issues upstream aplazados; generaciones parciales al añadir (D48); detección solo por niveles (D49); historial apartado en `ascmhl_superseded/` (D50).
+### Medido
+- H13: la referencia carga `ascmhl/` en recursivo; un historial viejo dentro rompe `info`/`verify`.
 
 ## [0.0.1] - 2026-10-01 — Hito 0: arranque
 ### Añadido

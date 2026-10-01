@@ -269,6 +269,11 @@ Sealing
 - **Elección**: solo niveles. La GUI muestra las «entradas fuera de sitio» (ficheros o carpetas en la raíz o en niveles intermedios que no encajan) para que producción ordene el archivo; la app no adivina. Confirma D18.
 - 2026-10-01.
 
+## D50 — El historial apartado por `Accept as new version` va a `<proyecto>/ascmhl_superseded/<fecha>/`
+- **Contexto**: la referencia carga `ascmhl/` en recursivo (H13): un historial viejo dentro de `ascmhl/superseded/` rompe `info` y `verify`. Opciones: carpeta hermana en el proyecto; `/config` del contenedor; raíz del archivo.
+- **Elección**: carpeta hermana `ascmhl_superseded/<AAAA-MM-DDTHHMMSSZ>/`, excluida del manifiesto nuevo por patrón de ignore por defecto. Viaja con el proyecto y sigue siendo verificable a mano. Matiza D13: la app escribe `ascmhl/` y, solo tras un Accept, `ascmhl_superseded/`.
+- 2026-10-01, hito 1.
+
 ---
 
 ## Pendiente de entrevista

@@ -2,7 +2,7 @@
 
 Servicio en contenedor Docker, con GUI web mínima, que vigila un directorio de archivo de proyectos terminados montado desde un NAS y mantiene un historial **ASC MHL** por proyecto. **Promesa**: todo proyecto archivado tiene manifiesto; lo que hay hoy coincide bit a bit con lo archivado; no falta nada; y queda constancia fechada de cada verificación. Respeta un horario de inactividad configurable para no cargar el servidor en horas de trabajo.
 
-**TL;DR.** Estado: arranque, entrevista de producto y técnica cerradas (D1–D41); hito 0 en curso (fixtures y spike de `mhllib`). Ver `CHANGELOG.md`, `docs/roadmap.md` y, para trabajar en el repo, `CLAUDE.md`.
+**TL;DR.** Estado: núcleo funcional por CLI (`mhl-sentinel run-once`), sin daemon ni GUI todavía; MVP (hitos 1–4) en curso. Ver `CHANGELOG.md`, `docs/roadmap.md` y, para trabajar en el repo, `CLAUDE.md`.
 
 ## Qué es, y qué no es
 - Es un vigilante de integridad para archivos de proyectos **terminados**: pocos cambios, muchos TB, lecturas caras.

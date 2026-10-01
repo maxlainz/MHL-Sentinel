@@ -9,7 +9,7 @@ Servicio en contenedor Docker con GUI web mínima que vigila un directorio de ar
 CLAUDE.md              este router
 .claude/rules/         normas (una por archivo)        .claude/skills/   obsidian-vault · release
 .claude/settings.json  hooks: pull + issues al arrancar · bloqueo de rutas/IPs al escribir · push al cerrar (no-op sin remoto)
-docs/decisiones.md     ADRs D1–Dn                      docs/bitacora/    una entrada por sesión (NN-slug.md)
+docs/decisiones.md     ADRs D1–Dn                      docs/bitacora/    una entrada por sesión (NN-slug.md); 02 cubre el MVP
 docs/roadmap.md        hitos → tags v0.N.0              docs/contexto-archivo.md  el archivo real, anonimizado
 docs/research/         informes de subagentes (inglés, TL;DR en español): spec ASC MHL · arquitectura del watcher
 src/mhl_sentinel/      código (mhlwriter desde hito 0)  tests/            pytest; fixtures sintéticos en tests/fixtures/archive (make fixtures, gitignored)
@@ -79,8 +79,8 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 01, `v0.0.1`)**: entrevistas cerradas (D7–D41), repo público, **hito 0 cerrado**: proyecto Python con `ascmhl==1.2`, `make fixtures`, spike `mhllib` verde (`src/mhl_sentinel/mhlwriter.py`: generación de proyecto con hashes precalculados, raíz de solo referencias, commit atómico; validado por la referencia), `make ci` real, `ci.yml`, skill `release`. D42–D43, H6–H12. Issues #1–#3.
-- **Después**: hito 1 (`v0.1.0`, núcleo sin GUI): detección por niveles, scan con snapshot SQLite, hasher con checkpoint y varios algoritmos por lectura, lector MHL 1.x de origen (D39), generación por proyecto, CLI `run-once`. Primero leer las notas de detección y operación del vault.
+- **Estado (2026-10-01, bitácora 02, `v0.1.0`)**: MVP en curso (D44: hitos 1–4). **Hito 1 cerrado**: núcleo sin GUI (`config`, `db`, `schedule`, `discovery`, `scanner`, `legacy_mhl`, `hasher`, `sealer`, `cli run-once`), 105 tests, e2e validado por la referencia. D1–D50, H1–H13. Empaquetado Docker y `release.yml` ya escritos (pendientes de probar en hito 2). Issues abiertos: #2 (upstream, aplazado), #3 (`roothash` raíz, hito 4).
+- **Después**: hito 2 (`events`, `supervisor`, `serve`, SIGTERM, imagen en GHCR) y hito 3 (GUI) en paralelo contra `docs/arquitectura.md`; luego hito 4 (raíz de referencias, verify 90 días).
 
 ## Pendiente del owner (2026-10-01)
 - Fuera del repo: actualizar el protocolo del estudio (`ascmhl/` en vez de `00_MANIFEST.mhl`; xxh128; `ascmhl-debug verify`; verificación trimestral por la app; `Seal` al terminar de archivar).

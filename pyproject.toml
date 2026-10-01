@@ -9,10 +9,14 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   # D1 / norma conformidad-mhl.md: la referencia es el oráculo; subir versión es decisión del owner.
   "ascmhl==1.2",
+  "click>=8.1.8",
   "pathspec>=1.1.1",
   "pydantic-settings>=2.15.0",
   "pyyaml>=6.0.3",
 ]
+
+[project.scripts]
+mhl-sentinel = "mhl_sentinel.cli:main"
 
 [dependency-groups]
 dev = [
