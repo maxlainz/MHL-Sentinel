@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.4.3] - 2026-10-01 — patch: Cancel
 ### Añadido
 - Botón `Cancel` en la tarjeta del proyecto: retira un `Seal` o `Accept as new version` que espera en cola y devuelve el proyecto a su estado anterior (D53, #4). `POST /projects/{id}/cancel`.
 
