@@ -7,7 +7,8 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
 COPY src ./src
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+# --no-editable: el paquete se copia a site-packages; la etapa final solo lleva .venv, no /app/src (H18)
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-editable
 
 FROM python:3.12-slim-bookworm
 LABEL org.opencontainers.image.source="https://github.com/maxlainz/MHL-Sentinel" \

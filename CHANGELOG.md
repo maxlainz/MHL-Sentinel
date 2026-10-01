@@ -4,6 +4,10 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-01
+### Corregido
+- La imagen `0.4.0` no arrancaba (`ModuleNotFoundError: mhl_sentinel`): `uv sync` instalaba el paquete en modo editable apuntando a `/app/src`, que no existe en la etapa final. Ahora se instala con `--no-editable`. Lo detectó la prueba de humo del pipeline (H18).
+
 ## [0.4.0] - 2026-10-01 — Hito 4: raíz de referencias y verificación periódica (MVP)
 ### Añadido
 - Hito 4: `rootmanifest.py` (historial de solo referencias en la raíz, D29/D43/D51), trabajo `verify` (relectura completa cada 90 días escalonada, regla mtime para distinguir corrupción, generación `verified` como prueba, D8/D23) y planificador de mantenimiento; GUI con fecha de la raíz, «verified» por proyecto y tabla de resultados por fichero en revisión. 155 tests. Prueba de humo del contenedor publicado en `release.yml`.

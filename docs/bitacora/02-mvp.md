@@ -22,6 +22,7 @@
 - **H15** — Los patrones de ignore se comparan con rutas absolutas en la referencia: `/_*` no casa nunca; hay que usar `_*` sin anclar. Reproducir: test de patrones en `tests/test_rootmanifest.py`.
 - **H16** — Un fichero suelto entre proyectos hace que `ascmhl-debug verify <raíz>` dé exit 21 («found new file»). Reproducir: e2e con el `00_README.md` de `SIN-CATEGORIA_CLIENTE-E`. Consecuencia de D49: el archivo debe estar ordenado; la GUI lo señala como entrada fuera de sitio.
 - **H17** — Docker Desktop de este Mac no alcanza Docker Hub ni GHCR (proxy `http.docker.internal:3128`; `docker pull` se cuelga). Reproducir: `docker info --format '{{.HTTPProxy}}'` y `docker pull python:3.12-slim-bookworm`. El contenedor se prueba con el job `smoke` de `release.yml`.
+- **H18** — La imagen `0.4.0` publicada no arrancaba: `ModuleNotFoundError: mhl_sentinel`. `uv sync` instala el proyecto en modo editable (un `.pth` hacia `/app/src`) y la etapa final del Dockerfile solo copia `.venv`. Lo cazó el job `smoke` de `release.yml` en su primera ejecución; `v0.4.1` instala con `--no-editable`. Reproducir: `docker run --rm ghcr.io/maxlainz/mhl-sentinel:0.4.0 mhl-sentinel --help`.
 - Vault: `MHL (Media Hash List)` ampliada (H13, generación parcial, historial apartado); `Historial ASC MHL anidado` ampliada (H14, H15, H16).
 
 ## Pendiente tras el MVP
