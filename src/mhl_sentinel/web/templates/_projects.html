@@ -1,7 +1,7 @@
 {% macro seal_form(r) -%}
 <form class="inline" method="post" action="/projects/{{ r.view.id }}/seal?from=inbox"
       hx-post="/projects/{{ r.view.id }}/seal?from=inbox" hx-target="#projects" hx-swap="outerHTML">
-  <button type="submit" class="btn small">Seal</button>
+  <button type="submit" class="btn small seal">Seal</button>
 </form>
 {%- endmacro %}
 {% macro item(r, cls="") -%}
@@ -80,7 +80,7 @@
 
   <section class="section">
     <h2 class="label">Everything else</h2>
-    <div class="quiet">
+    <div class="allquiet">
       {% if counters.projects == 0 and not inbox.ignored %}
       <p class="big">No projects found yet.</p>
       <p>The first round lists them.</p>

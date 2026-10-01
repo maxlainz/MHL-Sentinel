@@ -17,8 +17,8 @@ Rama: `feat/5-frontend-d` · issue #5 · capturas en `docs/propuestas/frontend-D
 - **«Qué está haciendo la app» era una línea de texto.** Ahora es una línea de tiempo: el trabajo en
   curso con barra, cuándo acaba el horario laboral, qué va después y los últimos trabajos
   (sellados, verificados, fallos). Sale de la tabla `jobs`; no toca el NAS.
-- **Pico.css daba a todo el mismo peso.** Hoja propia (~350 líneas, sin framework): grises
-  neutros y color solo con significado.
+- **Pico.css daba a todo el mismo peso.** Hoja propia (~400 líneas, sin framework): neutros
+  cálidos y color solo con significado.
 
 ## Bocetos
 
@@ -173,14 +173,24 @@ la de resultados (`corrupt`, `missing`…).
 ```
 En móvil, las mismas tarjetas a ancho completo; los días son píldoras que saltan de línea.
 
-## Color, tipografía y semáforos
-- **Grises neutros** (sin tinte azul ni cálido), como una sala de etalonaje: así cualquier color
-  en pantalla significa algo. Modo oscuro automático si el Mac está en oscuro.
-- **Rojo** = te toca decidir (tarjeta y botón `Review changes` / `Accept`). **Ámbar** = espera o
-  se mueve (en cola, leyendo, sin sellar). **Verde** = sellado, solo como punto pequeño. **Gris
-  hueco** = ignorado. Son los mismos semáforos de la arquitectura (verde/ámbar/rojo/gris).
-- Tipografía del sistema (San Francisco en Mac), titular de 28–44 px, rutas en monoespaciada,
-  números tabulares para horas y tamaños.
+## Color, tipografía, ancho y semáforos (ajustado tras D54)
+- **Claro y refinado por defecto**: fondo papel con un ligero sesgo cálido (`#f7f6f3`), tarjetas
+  blancas, bordes finos, sombras casi imperceptibles. Elegí cálido y no frío porque el
+  frío leído en grandes superficies recuerda a un panel técnico; el cálido, a una app de
+  escritorio tranquila. El **modo oscuro** solo aparece si el Mac está en oscuro, y es grafito
+  suave (`#1f2023`), no negro, con el mismo reparto de color.
+- **Rojo** = te toca decidir, pero como **filete rojo a la izquierda y texto rojo**, no como
+  tarjeta rellena; el único relleno rojo es el botón `Review changes` / `Accept`. **Ámbar** =
+  espera o se mueve. **Verde** = sellado, solo punto pequeño. **Gris hueco** = ignorado.
+- Los `Seal` de la lista son botones con borde (se rellenan al pasar el ratón): una columna de
+  botones negros pesaba demasiado.
+- Tipografía serena: titular de 24–34 px en peso normal (500), etiquetas de sección en
+  minúscula sin versalitas, jerarquía por tamaño y espacio; rutas en monoespaciada, números
+  tabulares.
+- **Ancho**: contenedor de hasta 1440 px con márgenes de 40–56 px; el log de actividad mide
+  360–400 px y lleva un filete a la izquierda. En pantallas de ≥ 1200 px las filas de la bandeja
+  y de «All projects» pasan a columnas (nombre | estado | botón) y se leen como una tabla.
+  Móvil: una columna, sin cambios de estructura.
 - El punto del trabajo en curso «respira» despacio (se apaga con «reducir movimiento»).
 
 ## Modelo de interacción
