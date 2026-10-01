@@ -18,7 +18,32 @@ Servicio en contenedor Docker, con GUI web mínima, que vigila un directorio de 
 6. Una GUI de una sola pantalla, en inglés, para producción: estado, lista de proyectos con semáforo, revisión, `Run scan now` y ajustes.
 
 ## Instalación
-Imagen multi-arch (amd64, arm64) en GHCR; `deploy/docker-compose.yml` con volúmenes `/archive` y `/config`; guía para QNAP Container Station en `deploy/README.md`. La GUI no lleva login: pensada para la LAN; tras un proxy con autenticación si se expone fuera.
+Imagen multi-arch (amd64, arm64) en `ghcr.io/maxlainz/mhl-sentinel`. Dos volúmenes: `/archive` (el directorio vigilado; la app solo escribe `<proyecto>/ascmhl/`) y `/config` (`config.yaml` + `state.db`, en disco **local**, nunca en un share de red). La GUI (puerto 8080) no lleva login: pensada para la LAN; tras un proxy con autenticación si se expone fuera.
+
+`docker-compose.yml` (también en `deploy/`):
+```yaml
+services:
+  mhl-sentinel:
+    image: ghcr.io/maxlainz/mhl-sentinel:latest
+    container_name: mhl-sentinel
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s          # SIGTERM: termina el bloque en curso y guarda el checkpoint; nunca una generación a medias
+    ports:
+      - "8080:8080"
+    environment:
+      PUID: "1000"                  # usuario del NAS con permiso de escritura en el archivo (id <usuario>)
+      PGID: "1000"
+      MHLS_TIMEZONE: "Europe/Madrid"   # zona del horario laboral; el proceso corre en UTC
+    volumes:
+      - "/ruta/del/archivo:/archive"          # el archivo vigilado
+      - "/ruta/local/mhl-sentinel:/config"    # config.yaml + state.db: disco LOCAL
+```
+```sh
+docker compose up -d
+# luego http://<host>:8080 → Settings (niveles, horario laboral) → Seal en un proyecto pequeño
+```
+Guía para QNAP Container Station y variables en `deploy/README.md` y `.env.example`.
 
 ## Desarrollo
 `make setup` · `make fixtures` · `make run` (GUI en http://localhost:8080 sobre el archivo sintético) · `make ci`.
