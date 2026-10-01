@@ -26,7 +26,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from mhl_sentinel import __version__, sealer
 from mhl_sentinel.clock import utcnow
-from mhl_sentinel.config import Settings, load_settings, save_yaml
+from mhl_sentinel.config import ENV_ONLY_FIELDS, Settings, load_settings, save_yaml
 from mhl_sentinel.db import JobRow, ProjectRow
 from mhl_sentinel.discovery import find_stray_entries
 from mhl_sentinel.models import ProjectState
@@ -346,7 +346,9 @@ async def settings_post(request: Request) -> Response:
         return _settings_page(request, state, 500)
     # Re-read with the real precedence (defaults < yaml < env) so the running state never
     # shows a value an MHLS_* variable overrides (D36).
-    effective = load_settings(new.config_dir)
+    effective = load_settings(new.config_dir).model_copy(
+        update={f: getattr(current, f) for f in ENV_ONLY_FIELDS}
+    )
     ctx.settings_ref.replace(effective)
     state = settings_form.FormState(
         settings_form.values_from_settings(effective), warnings=warnings, saved=True
