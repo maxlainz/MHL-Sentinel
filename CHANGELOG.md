@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Medido
+- H19: primera pasada sobre el archivo real en el NAS: 95 proyectos, 32 050 ficheros, 11,8 TB, ~34 s (predicción de tiempo acertada, la de ficheros no). Bitácora 02.
 
 ## [0.4.2] - 2026-10-01
 ### Añadido
