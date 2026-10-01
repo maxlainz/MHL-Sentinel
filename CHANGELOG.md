@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-10-01 — GUI «Bandeja»
 ### Añadido
 - Ajuste de tema en Ajustes → *Appearance*: `Auto (follow the system)`, `Light` o `Dark` (D56). Campo `theme` en `config.yaml` (env `MHLS_THEME`), `auto` por defecto.
 

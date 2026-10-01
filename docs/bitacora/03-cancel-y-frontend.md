@@ -1,4 +1,4 @@
-# 03 — Patch `v0.4.3` (Cancel) y propuestas de frontend (2026-10-01)
+# 03 — Patch `v0.4.3` (Cancel), frontend «Bandeja» `v0.5.0` y `main` protegida (2026-10-01)
 
 **TL;DR.** Dos encargos del owner en paralelo: (1) poder cancelar un `Seal` programado para fuera de horario, llevado a producción como patch `v0.4.3` (D53, issue #4, PR #6); (2) rehacer el frontend entero: cuatro subagentes Opus con libertad creativa producen cuatro propuestas independientes (ramas `feat/5-frontend-a..d`, documento con bocetos en texto en `docs/propuestas/`), se levantan en local en cuatro puertos y el owner elige (issue #5).
 
@@ -17,7 +17,16 @@
   - **C** «Media Pool»: una sola tabla ordenable y filtrable, ficha en panel lateral, barra de estado fija, oscuro por defecto.
   - **D** «Bandeja»: frase de estado, solo lo que pide decisión (Seal/Cancel de un clic), resto plegado, log de actividad al estilo Hedge.
 - Demo local: cada rama levantada desde su worktree en los puertos 8101–8104 con una copia de los fixtures, `run-once --seal-all`, estados sembrados (sellado+verificado, revisión, en cola manual, sin manifiesto, ignorado) y horario laboral 00:00–23:59 para congelar el estado. Capturas con Chrome sin cabeza a través de un proxy que responde 404 a `/events` (la conexión SSE impide que Chrome dé la página por cargada). Comparativa entregada al owner como artifact.
-- Elección del owner: pendiente.
+- Elección del owner (D54): **D**, con dos cambios: contenedor más ancho y acabado claro y refinado («no tan oscuro denso gamer; es una app profesional pero no se usa en la sala de color»). El agente de D rebasó sobre `main` (entra el Cancel), ensanchó a 1440 px y pasó a tema claro cálido por defecto con oscuro suavizado siguiendo al sistema. Ramas A, B y C borradas sin push.
+- Revisión adversarial (Opus, solo lectura) sobre la rama D: 10 hallazgos, todos corregidos con tests (170 → 174). Los dos graves: el titular decía «Every project is sealed» con proyectos en cola o leyéndose, y el log de actividad mostraba «Verified X» aunque la verificación hubiera encontrado corrupción (el job acaba `done` al mandar a revisión). Lo segundo se detecta ahora por `sealer.REVIEW_LOG_PREFIX`, compartido entre sealer y GUI; un campo explícito en `jobs` sería más robusto y queda como mejora.
+- Tema configurable (D56): el owner vio el prototipo en oscuro porque su Mac está en modo oscuro; pidió auto / claro / oscuro en Ajustes, auto por defecto. Campo `theme` en `config.yaml` (`MHLS_THEME`).
+- Integración: PR #8 (squash) con la CI verde; release `v0.5.0` por rama `chore/release-v0.5.0` siguiendo la norma nueva. En `docs/roadmap.md` la GUI entra como hito 4b `v0.5.0` y Operación pasa a `v0.6.0`.
+
+## `main` protegida (D55)
+El owner pidió «dejar de trabajar en main y bloquear la rama, como norma». Norma `rama-main-protegida.md`; protección activa en GitHub (PR obligatorio, check `ci`, rama al día, sin force-push ni borrado, también para el administrador); `git.md`, `pull-y-push.md` y la skill `release` actualizadas (PR #7).
+
+## Vault
+Sin conceptos nuevos de archivo: el trabajo de la sesión es de interfaz y de workflow (cancelar un trabajo en cola, protección de rama, tema de la GUI), no de dominio.
 
 ## Siguiente paso
-Presentar las cuatro propuestas (URLs locales y capturas), registrar la elección como `Dn`, integrar la elegida en `main` adaptando `tests/test_web.py`, y borrar las otras ramas.
+Comprobar en el NAS que Watchtower ha subido `v0.5.0` (`/healthz` → `version`), primer `Seal` de un proyecto pequeño y medida de MB/s del hasher (predicción en bitácora 02), backlog de 95 proyectos a ritmo de ventanas, MediaVerify sobre la raíz (#3). Mejora pendiente de la GUI: resultado explícito del trabajo en `jobs` en vez de detectar la revisión por el texto del log.
