@@ -1,6 +1,6 @@
 <header id="status-header" class="status"
         hx-get="/fragments/header" hx-swap="outerHTML"
-        hx-trigger="sse:cycle.finished, sse:job.started, sse:job.finished, sse:job.failed, sse:archive.unreachable, sse:archive.ok">
+        hx-trigger="sse:cycle.finished, sse:job.started, sse:job.finished, sse:job.failed, sse:archive.unreachable, sse:archive.ok, sse:root.updated">
   <p>
     {% if archive_ok %}<span class="light green">●</span> Archive: <strong>OK</strong>
     {% else %}<span class="light red">●</span> Archive: <strong>not reachable</strong>{% endif %}
@@ -12,6 +12,7 @@
     {% endif %}
     <small class="muted">({{ timezone }})</small>
   </p>
+  <p><small>Root manifest: {% if root_manifest %}{{ root_manifest }}{% else %}not yet{% endif %}</small></p>
   {% if job_text %}
   <p>{{ job_text }}{% if job_pct is not none %} · {{ job_pct }}%{% endif %}
     {% if working_now %}<small class="muted">(paused until the idle window)</small>{% endif %}</p>

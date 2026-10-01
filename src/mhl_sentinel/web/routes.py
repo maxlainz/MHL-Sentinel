@@ -24,7 +24,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from mhl_sentinel import __version__, sealer
+from mhl_sentinel import __version__, rootmanifest, sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import ENV_ONLY_FIELDS, Settings, load_settings, save_yaml
 from mhl_sentinel.db import JobRow, ProjectRow
@@ -138,6 +138,7 @@ def header_context(ctx: WebContext) -> dict[str, Any]:
         "job_pct": job_pct,
         "queued_jobs": status.queued_jobs,
         "timezone": settings.timezone,
+        "root_manifest": views.fmt_datetime(rootmanifest.last_root_manifest_at(ctx.db), tz),
     }
 
 
@@ -163,8 +164,11 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
             history = views.load_history(settings.archive_root / project.rel_path, tz)
         else:
             history = views.History(error="the archive is not reachable right now")
+    verification = views.is_verification_review(project)
     review = (
-        views.review_rows(ctx.db, project, tz) if project.state is ProjectState.NEEDS_REVIEW else []
+        views.review_rows(ctx.db, project, tz)
+        if project.state is ProjectState.NEEDS_REVIEW and not verification
+        else []
     )
     generations = project.last_generation_no
     if history.generations:
@@ -178,6 +182,7 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "generation_count": generations,
         "history": history,
         "review": review,
+        "verification": views.verify_view(ctx.db, project, tz) if verification else None,
         "job": job,
         "job_label": "" if job is None else views.JOB_LABEL.get(job.kind, str(job.kind)),
         "job_running": job is not None and job.state.value == "running",

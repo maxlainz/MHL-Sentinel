@@ -7,7 +7,7 @@ import importlib.util
 import sys
 import time
 from collections.abc import Callable, Coroutine, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -17,7 +17,7 @@ import pytest
 from mhl_sentinel import sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import Settings, WorkingHoursConfig
-from mhl_sentinel.db import Database
+from mhl_sentinel.db import Database, SealedFile
 from mhl_sentinel.events import Event, EventBus
 from mhl_sentinel.models import JobKind, JobState, ProjectState, Trigger
 from mhl_sentinel.settings_ref import SettingsRef
@@ -314,5 +314,103 @@ def test_a_failing_job_is_published_as_job_failed(tmp_path: Path) -> None:
                 await sup.stop()
             failed = [e for e in drain(q) if e.kind == "job.failed"]
             assert [e.payload["id"] for e in failed] == [job_id]
+
+    run(body)
+
+
+def test_scan_cycle_schedules_verifications_and_the_root_manifest(tmp_path: Path) -> None:
+    """Hito 4: after a scan outside working hours, due projects get ``verify`` and the root gets
+    its references-only generation; ``root.updated`` and the verify counts are published."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    settings = make_settings(tmp_path, archive, verify_interval_days=1)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            bus = EventBus(db)
+            q = bus.subscribe()
+            sup = Supervisor(db, SettingsRef(settings), bus, tick_seconds=0.1, idle_seconds=0.05)
+            await sup.start()
+            try:
+                await until(lambda: sup.status().last_cycle_at is not None)
+                for p in db.list_projects(ProjectState.UNSEALED):
+                    sealer.request_seal(db, p.id, utcnow())
+                sup.notify_job_queued()
+                await until(lambda: {p.state for p in db.list_projects()} == {ProjectState.SEALED})
+                await until(lambda: db.count_jobs(JobState.QUEUED) == 0)
+                old = utcnow() - timedelta(days=2)
+                for p in db.list_projects():
+                    db.update_project_fields(p.id, last_sealed_at=old)
+                sup.request_scan_now()
+                await until(lambda: (archive / "ascmhl" / "ascmhl_chain.xml").is_file(), 60)
+                await until(
+                    lambda: (
+                        all(p.last_verified_at for p in db.list_projects())
+                        and db.count_jobs(JobState.QUEUED) == 0
+                        and sup.status().current_job is None
+                    ),
+                    60,
+                )
+            finally:
+                await sup.stop()
+            events = drain(q)
+            verified = [
+                e.payload
+                for e in events
+                if e.kind == "job.finished" and e.payload["kind"] == "verify"
+            ]
+            assert len(verified) == len(db.list_projects())
+            assert all(set(p["verify"]) == {"ok"} for p in verified)
+            assert any(e.kind == "root.updated" for e in events)
+            finished = [
+                e.payload for e in events if e.kind == "cycle.finished" and e.payload["scan"]
+            ]
+            assert any(p.get("root_enqueued") for p in finished)
+            assert db.get_kv("last_root_manifest_at") is not None
+
+    run(body)
+
+
+def test_manual_scan_in_working_hours_schedules_no_verification(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working, verify_interval_days=1)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                EventBus(db),
+                tick_seconds=0.05,
+                idle_seconds=0.05,
+                now_fn=lambda: NOON,
+            )
+            sealer.run_scan_cycle(db, settings, now=NOON)
+            for p in db.list_projects():  # pretend they were sealed long ago
+                db.update_project_fields(
+                    p.id, last_generation_no=1, last_sealed_at=NOON - timedelta(days=5)
+                )
+                db.set_state(p.id, ProjectState.SEALED)
+                db.replace_sealed_files(
+                    p.id,
+                    [
+                        SealedFile(f.rel_path, f.size, f.mtime_ns, None)
+                        for f in db.get_files(p.id).values()
+                    ],
+                )
+            await sup.start()
+            try:
+                sup.request_scan_now()
+                await until(lambda: sup.status().last_cycle_at is not None)
+                await asyncio.sleep(0.2)
+            finally:
+                await sup.stop()
+            assert {p.state for p in db.list_projects()} == {ProjectState.SEALED}
+            assert [j for j in db.list_jobs() if j.kind is JobKind.VERIFY] == []
+            # Outside working hours the same projects are due (the gate is the only difference).
+            evening = NOON.replace(hour=22)
+            assert sealer.schedule_verifications(db, settings, now=evening, working=False)
 
     run(body)

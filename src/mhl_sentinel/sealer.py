@@ -4,8 +4,11 @@ This is the only module that changes ``projects.state``. Three layers:
 
 - :func:`classify` / :func:`should_auto_enqueue`: pure decisions from a scan diff (D9, D15, D31).
 - :func:`run_scan_cycle`: discovery → scan → classify → enqueue (no media file is read).
-- :func:`run_job`: ``seal``, ``append`` and ``accept_new_version`` (D16, D17, D28, D39, D48).
-  Only jobs read media files, through :mod:`hasher`, and only they write generations.
+- :func:`run_job`: ``seal``, ``append``, ``accept_new_version`` (D16, D17, D28, D39, D48),
+  ``verify`` (D23, D8) and ``root_manifest`` (D29, :mod:`rootmanifest`). Only jobs read media
+  files, through :mod:`hasher`, and only they write generations.
+- :func:`schedule_maintenance`: staggered periodic verification (D23) and the root manifest job,
+  called after a scan cycle.
 
 Orphan manifests (issue #1): a ``NNNN_*.mhl`` in ``ascmhl/`` that the chain does not list is
 the trace of a crash between the two renames of ``mhlwriter._commit``. ``ascmhl`` would load it
@@ -17,28 +20,30 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-import shutil
+import math
 import threading
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ascmhl import chain_xml_parser
 from ascmhl.history import MHLHistory
 
-from mhl_sentinel import __version__, legacy_mhl
-from mhl_sentinel.clock import to_iso, utcnow
+from mhl_sentinel import __version__, legacy_mhl, rootmanifest
+from mhl_sentinel.clock import from_iso, to_iso, utcnow
 from mhl_sentinel.config import Settings
-from mhl_sentinel.db import Database, JobRow, ProjectRow, ReviewItem, SealedFile
+from mhl_sentinel.db import Database, JobRow, ProjectRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.discovery import discover_projects
 from mhl_sentinel.hasher import FileChanged, Gate, Stopped, hash_project
 from mhl_sentinel.mhlwriter import (
     DEFAULT_IGNORE_PATTERNS,
     PRIMARY_HASH_FORMAT,
-    SUPERSEDED_DIR,
     MHLReviewError,
     write_project_generation,
+)
+from mhl_sentinel.mhlwriter import (
+    retire_history as retire_history,  # re-exported (D17)
 )
 from mhl_sentinel.models import (
     ChangeKind,
@@ -57,7 +62,11 @@ HISTORY_DIR = "ascmhl"
 CHAIN_FILE = "ascmhl_chain.xml"
 ORPHAN_SUFFIX = ".orphan"
 FIRST_DISCOVERY_KEY = "first_discovery_done"
-ROOT_MANIFEST_STALE_KEY = "root_manifest_stale"  # consumed by the root manifest (hito 4)
+ROOT_MANIFEST_STALE_KEY = rootmanifest.ROOT_MANIFEST_STALE_KEY  # set after every generation
+VERIFY_DAY_KEY = "verify_day"  # local date (settings.timezone) of the counter below
+VERIFY_DAY_COUNT_KEY = "verify_day_count"  # verify jobs enqueued automatically that day
+VERIFICATION_PREFIX = "verification:"  # review_reason of a failed verify job
+MTIME_TOLERANCE_NS = 1_000_000_000  # as scanner.diff_against_sealed
 MAX_LISTED_PATHS = 10
 _SUPPORTED_LEGACY_FORMATS = frozenset({"xxh64", "md5", "sha1"})
 
@@ -217,22 +226,6 @@ def scan_ignore_patterns(project_root: Path, settings: Settings) -> list[str]:
     return patterns
 
 
-def retire_history(project_root: Path, now: datetime) -> Path | None:
-    """D17: move ``ascmhl/`` to ``ascmhl_superseded/<YYYY-MM-DDTHHMMSSZ>/`` (never deleted)."""
-    asc_dir = project_root / HISTORY_DIR
-    if not asc_dir.exists():
-        return None
-    stamp = now.strftime("%Y-%m-%dT%H%M%SZ")
-    target = project_root / SUPERSEDED_DIR / stamp
-    n = 1
-    while target.exists():
-        target = project_root / SUPERSEDED_DIR / f"{stamp}-{n}"
-        n += 1
-    target.parent.mkdir(exist_ok=True)
-    shutil.move(str(asc_dir), str(target))
-    return target
-
-
 def _generation_no(manifest: Path) -> int:
     return int(manifest.name.split("_", 1)[0])
 
@@ -383,6 +376,79 @@ def _scan_one(
         summary.states[project.rel_path] = ProjectState.QUEUED
 
 
+# --- maintenance: periodic verification (D23) and the root manifest (D29) ----------------------
+
+
+def _verify_reference_time(project: ProjectRow) -> datetime:
+    """Last proof of integrity: last verification, else last seal, else first sight."""
+    return from_iso(project.last_verified_at or project.last_sealed_at or project.first_seen)
+
+
+def verify_daily_cap(sealed_count: int, interval_days: int) -> int:
+    """D23 staggering: ``ceil(sealed / interval)`` verifications a day cover the archive once
+    per interval without reading everything on the same night."""
+    return math.ceil(sealed_count / interval_days) if sealed_count else 0
+
+
+def schedule_verifications(
+    db: Database, settings: Settings, *, now: datetime, working: bool
+) -> list[str]:
+    """Enqueue ``verify`` (priority 10) for sealed projects whose last verification (or seal)
+    is older than ``verify_interval_days``, oldest first, at most :func:`verify_daily_cap` per
+    local day (counter in ``settings_kv``). Never during working hours (D33). Returns the
+    rel_paths enqueued."""
+    if working:
+        return []
+    sealed = [p for p in db.list_projects(ProjectState.SEALED) if _is_sealed(p)]
+    cap = verify_daily_cap(len(sealed), settings.verify_interval_days)
+    day = now.astimezone(settings.tzinfo).date().isoformat()
+    count = int(db.get_kv(VERIFY_DAY_COUNT_KEY) or 0) if db.get_kv(VERIFY_DAY_KEY) == day else 0
+    limit = now - timedelta(days=settings.verify_interval_days)
+    due = sorted(
+        (
+            p
+            for p in sealed
+            if _verify_reference_time(p) <= limit and not db.has_open_job(p.id, JobKind.VERIFY)
+        ),
+        key=lambda p: (_verify_reference_time(p), p.rel_path),
+    )
+    enqueued: list[str] = []
+    for project in due[: max(0, cap - count)]:
+        enqueue(db, project.id, JobKind.VERIFY, Trigger.AUTO, now)
+        enqueued.append(project.rel_path)
+        count += 1
+    db.set_kv(VERIFY_DAY_KEY, day)
+    db.set_kv(VERIFY_DAY_COUNT_KEY, str(count))
+    if enqueued:
+        log.info("verification scheduled for %d project(s) (cap %d/day)", len(enqueued), cap)
+    return enqueued
+
+
+def schedule_root_manifest(db: Database, settings: Settings, *, now: datetime) -> bool:
+    """Enqueue the ``root_manifest`` job (priority 5, the lowest: it runs after the night's
+    seals and verifications) when :func:`rootmanifest.root_manifest_needed`."""
+    if db.has_open_job(None, JobKind.ROOT_MANIFEST):
+        return False
+    if not rootmanifest.root_manifest_needed(db, settings):
+        return False
+    db.enqueue_job(JobKind.ROOT_MANIFEST, None, Trigger.AUTO, PRIORITY[JobKind.ROOT_MANIFEST], now)
+    return True
+
+
+def schedule_maintenance(
+    db: Database, settings: Settings, *, now: datetime, working: bool
+) -> list[tuple[str, JobKind]]:
+    """Called at the end of a scan cycle: verifications (outside working hours only) and the
+    root manifest. Returns what was enqueued (``"."`` stands for the archive root)."""
+    out = [
+        (rel, JobKind.VERIFY)
+        for rel in schedule_verifications(db, settings, now=now, working=working)
+    ]
+    if schedule_root_manifest(db, settings, now=now):
+        out.append((".", JobKind.ROOT_MANIFEST))
+    return out
+
+
 # --- user requests (GUI buttons) -------------------------------------------------------------
 
 
@@ -506,16 +572,24 @@ def run_job(
     ``on_progress(files_done, files_total, bytes_done, bytes_total)`` is called after each
     progress write to the DB (the supervisor turns it into ``job.progress`` events).
     """
-    if job.project_id is None or job.kind not in (
-        JobKind.SEAL,
-        JobKind.APPEND,
-        JobKind.ACCEPT_NEW_VERSION,
-    ):
-        db.set_job_state(job.id, JobState.FAILED, now_fn(), error=f"{job.kind}: not implemented")
+    if job.kind is JobKind.ROOT_MANIFEST:
+        _run_root_manifest(db, settings, job, now_fn)
+        return
+    if job.project_id is None:
+        db.set_job_state(job.id, JobState.FAILED, now_fn(), error=f"{job.kind}: no project")
         return
     project = db.get_project(job.project_id)
     if project is None:
         db.set_job_state(job.id, JobState.FAILED, now_fn(), error="project not found")
+        return
+    verify = job.kind is JobKind.VERIFY
+    if verify and not (
+        _is_sealed(project)
+        and project.state in (ProjectState.SEALED, ProjectState.QUEUED, ProjectState.HASHING)
+    ):
+        # The project left ``sealed`` while the verification waited (new files, review...).
+        db.log(job.id, "info", f"verify skipped: project is {project.state}", now_fn())
+        db.set_job_state(job.id, JobState.CANCELLED, now_fn())
         return
     ctx = _Ctx(
         db,
@@ -538,12 +612,18 @@ def run_job(
             ctx.log("warning", f"orphan manifest renamed to {orphan.name} (issue #1)")
         if job.kind is JobKind.APPEND:
             _run_append(ctx)
+        elif verify:
+            _run_verify(ctx)
         else:
             _run_seal(ctx, accept=job.kind is JobKind.ACCEPT_NEW_VERSION)
     except Stopped:
         db.set_job_state(job.id, JobState.QUEUED, now_fn())
-        db.set_state(project.id, ProjectState.QUEUED, review_reason=project.review_reason)
-        ctx.log("info", "stopped; back in the queue (hashes already done are kept)")
+        if verify:  # nothing was decided: the project is still sealed
+            db.set_state(project.id, ProjectState.SEALED)
+            ctx.log("info", "stopped; back in the queue (a verification re-reads everything)")
+        else:
+            db.set_state(project.id, ProjectState.QUEUED, review_reason=project.review_reason)
+            ctx.log("info", "stopped; back in the queue (hashes already done are kept)")
     except FileChanged as exc:
         msg = f"file kept changing while being read: {exc}"
         ctx.finish(JobState.FAILED, msg)
@@ -563,8 +643,21 @@ def _scan_for_job(ctx: _Ctx, patterns: list[str]) -> list[FileStat]:
     return outcome.files
 
 
+class _FreshReadCache(_DbHashCache):
+    """Never hits: a verification must read every byte (D8, D23). Still records the digests,
+    so an Accept right after a failed verification does not read the project again."""
+
+    def get(self, rel_path: str, size: int, mtime_ns: int) -> dict[str, str]:
+        del rel_path, size, mtime_ns
+        return {}
+
+
 def _hash(
-    ctx: _Ctx, files: list[FileStat], expected: Mapping[str, Mapping[str, str]]
+    ctx: _Ctx,
+    files: list[FileStat],
+    expected: Mapping[str, Mapping[str, str]],
+    *,
+    fresh: bool = False,
 ) -> dict[str, dict[str, str]]:
     def formats_for(rel_path: str) -> Collection[str]:
         legacy = set(expected.get(rel_path, {})) & _SUPPORTED_LEGACY_FORMATS
@@ -576,11 +669,12 @@ def _hash(
             ctx.on_progress(files_done, files_total, bytes_done, bytes_total)
 
     progress(0, len(files), 0, sum(f.size for f in files))
+    cache_cls = _FreshReadCache if fresh else _DbHashCache
     digests = hash_project(
         ctx.root,
         files,
         formats_for,
-        _DbHashCache(ctx.db, ctx.project.id, ctx.now_fn),
+        cache_cls(ctx.db, ctx.project.id, ctx.now_fn),
         gate=ctx.gate,
         stop=ctx.stop,
         progress=progress,
@@ -639,17 +733,23 @@ def _inherited(expected: Mapping[str, Mapping[str, str]]) -> set[str]:
 
 
 def _after_generation(
-    ctx: _Ctx, manifest: Path, sealed: Iterable[SealedFile], files: list[FileStat]
+    ctx: _Ctx,
+    manifest: Path,
+    sealed: Iterable[SealedFile],
+    files: list[FileStat],
+    *,
+    verified: bool = False,
 ) -> None:
+    """``verified``: a verify generation stamps ``last_verified_at``, not ``last_sealed_at``."""
     now = ctx.now_fn()
     db, pid = ctx.db, ctx.project.id
     db.replace_sealed_files(pid, sealed)
     db.update_project_fields(
         pid,
         last_generation_no=_generation_no(manifest),
-        last_sealed_at=now,
         file_count=len(files),
         total_bytes=sum(f.size for f in files),
+        **{"last_verified_at" if verified else "last_sealed_at": now},
     )
     db.clear_review_items(pid)
     db.set_state(pid, ProjectState.SEALED)
@@ -742,3 +842,119 @@ def _run_append(ctx: _Ctx) -> None:
         )
     ctx.log("info", f"appended {len(diff.added)} files")
     _after_generation(ctx, manifest, merged.values(), files)
+
+
+# --- verify (D23, D8) and root manifest (D29) jobs -------------------------------------------
+
+
+def compare_for_verify(
+    sealed: Mapping[str, SealedFile],
+    present: Mapping[str, FileStat],
+    digests: Mapping[str, Mapping[str, str]],
+) -> list[VerifyResult]:
+    """Fresh read vs ``sealed_files`` (vault note `Distinguir corrupción de modificación por
+    mtime`): same hash → ``ok``; different hash with the same size and mtime (±1 s) →
+    ``corrupt`` (nobody wrote the file: the bytes changed underneath); different hash and a
+    different size or mtime → ``modified``; recorded but gone → ``missing``; not recorded →
+    ``added`` (fine, D9)."""
+    out: list[VerifyResult] = []
+    for rel in sorted(set(sealed) | set(present)):
+        old, cur = sealed.get(rel), present.get(rel)
+        if cur is None:
+            assert old is not None
+            out.append(VerifyResult(rel, old.xxh128, None, "missing"))
+            continue
+        actual = digests.get(rel, {}).get(PRIMARY_HASH_FORMAT)
+        if old is None:
+            out.append(VerifyResult(rel, None, actual, "added"))
+        elif old.xxh128 is None or old.xxh128 == actual:
+            out.append(VerifyResult(rel, old.xxh128, actual, "ok"))
+        elif old.size == cur.size and abs(old.mtime_ns - cur.mtime_ns) <= MTIME_TOLERANCE_NS:
+            out.append(VerifyResult(rel, old.xxh128, actual, "corrupt"))
+        else:
+            out.append(VerifyResult(rel, old.xxh128, actual, "modified"))
+    return out
+
+
+VERIFY_PROBLEMS = ("corrupt", "modified", "missing")
+
+
+def _verify_reason(problems: list[VerifyResult]) -> str:
+    counts = [
+        f"{sum(r.status == s for r in problems)} {s}"
+        for s in VERIFY_PROBLEMS
+        if any(r.status == s for r in problems)
+    ]
+    paths = _list_paths(r.rel_path for r in problems)
+    return f"{VERIFICATION_PREFIX} {', '.join(counts)}; files: {paths}"
+
+
+def _run_verify(ctx: _Ctx) -> None:
+    """Re-read every file, compare with ``sealed_files``; all fine → a full generation where
+    the library marks every known file ``verified`` and new ones ``original`` (spec §5.6: a
+    verification appends a generation); any problem → review, nothing written."""
+    patterns = scan_ignore_patterns(ctx.root, ctx.settings)
+    files = _scan_for_job(ctx, patterns)
+    sealed_rows = ctx.db.get_sealed_files(ctx.project.id)
+    present = {f.rel_path: f for f in files}
+    digests = _hash(ctx, files, {}, fresh=True)
+    results = compare_for_verify(sealed_rows, present, digests)
+    ctx.db.replace_verify_results(ctx.job.id, ctx.project.id, results)
+    problems = [r for r in results if r.status in VERIFY_PROBLEMS]
+    if problems:
+        items = []
+        for r in problems:
+            old, cur = sealed_rows[r.rel_path], present.get(r.rel_path)
+            change = ChangeKind.DELETED if cur is None else ChangeKind.MODIFIED
+            items.append(
+                ReviewItem(
+                    r.rel_path,
+                    change,
+                    old.size,
+                    None if cur is None else cur.size,
+                    old.mtime_ns,
+                    None if cur is None else cur.mtime_ns,
+                )
+            )
+        _to_review(ctx, _verify_reason(problems), items)
+        return
+    try:
+        manifest = write_project_generation(ctx.root, digests, patterns, __version__)
+    except MHLReviewError as exc:  # sealed_files and the history disagree
+        _to_review(ctx, f"{VERIFICATION_PREFIX} {exc}", [])
+        return
+    sealed = [
+        SealedFile(f.rel_path, f.size, f.mtime_ns, digests[f.rel_path][PRIMARY_HASH_FORMAT])
+        for f in files
+    ]
+    added = sum(r.status == "added" for r in results)
+    ctx.log(
+        "info",
+        f"verified {len(files) - added} files" + (f", {added} new" if added else ""),
+    )
+    _after_generation(ctx, manifest, sealed, files, verified=True)
+
+
+def _run_root_manifest(
+    db: Database, settings: Settings, job: JobRow, now_fn: Callable[[], datetime]
+) -> None:
+    db.set_job_state(job.id, JobState.RUNNING, now_fn())
+    try:
+        if not settings.archive_root.is_dir():
+            raise ArchiveUnavailableError(f"archive root {settings.archive_root} is missing")
+        for orphan in quarantine_orphan_manifests(settings.archive_root):
+            db.log(job.id, "warning", f"orphan root manifest renamed to {orphan.name}", now_fn())
+        manifest = rootmanifest.refresh_root_manifest(db, settings, now=now_fn())
+    except Exception as exc:
+        msg = f"{type(exc).__name__}: {exc}"
+        db.log(job.id, "error", msg, now_fn())
+        db.set_job_state(job.id, JobState.FAILED, now_fn(), error=msg)
+        log.error("root manifest job %d failed: %s", job.id, msg)
+        return
+    db.log(
+        job.id,
+        "info",
+        f"wrote {manifest.name}" if manifest is not None else "root manifest up to date",
+        now_fn(),
+    )
+    db.set_job_state(job.id, JobState.DONE, now_fn())

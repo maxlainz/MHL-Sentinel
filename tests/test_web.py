@@ -19,7 +19,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from mhl_sentinel.config import Settings
-from mhl_sentinel.db import Database, JobRow, ReviewItem, SealedFile
+from mhl_sentinel.db import Database, JobRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
 from mhl_sentinel.web import create_app
 from mhl_sentinel.web.routes import event_stream
@@ -208,6 +208,53 @@ def test_review_detail_shows_items_and_buttons(env: Env) -> None:
     assert "added files are fine" in r.text
     assert "Accept as new version" in r.text and "Postpone" in r.text
     assert ">Seal<" not in r.text
+
+
+def test_header_shows_the_root_manifest_date(env: Env) -> None:
+    assert "Root manifest: not yet" in env.client.get("/fragments/header").text
+    env.db.set_kv("last_root_manifest_at", "2026-10-01T23:30:00.000000Z")
+    header = env.client.get("/fragments/header").text
+    assert "Root manifest: 2026-10-02 01:30" in header  # Europe/Madrid
+    assert "sse:root.updated" in header
+    assert "Root manifest: 2026-10-02 01:30" in env.client.get("/").text
+
+
+def test_verification_review_shows_the_verify_results(env: Env) -> None:
+    pid = env.ids["needs_review"]
+    job_id = env.db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 10, NOW)
+    env.db.set_job_state(job_id, JobState.DONE, NOW)
+    env.db.replace_verify_results(
+        job_id,
+        pid,
+        [
+            VerifyResult("01_MASTERS/spot_30s_v2.mov", "aa", "cc", "corrupt"),
+            VerifyResult("02_GRADE/grade.drx", "dd", "dd", "ok"),
+            VerifyResult("05_DELIVERABLES/spot_30s_old.mp4", "bb", None, "missing"),
+            VerifyResult("05_DELIVERABLES/spot_30s_v3.mp4", None, "ee", "added"),
+        ],
+    )
+    env.db.set_state(
+        pid,
+        ProjectState.NEEDS_REVIEW,
+        review_reason="verification: 1 corrupt, 1 missing; files: 01_MASTERS/spot_30s_v2.mov, "
+        "05_DELIVERABLES/spot_30s_old.mp4",
+    )
+    main = env.client.get("/").text
+    assert "review: verification: 1 corrupt, 1 missing" in main
+    r = env.client.get(f"/projects/{pid}")
+    assert r.status_code == 200
+    assert "Periodic verification of 2026-10-02 00:00" in r.text
+    assert "1 file OK." in r.text
+    rows = re.findall(
+        r'<tr data-verify="(\w+)"><td>[^<]+</td><td class="path">([^<]+)</td>', r.text
+    )
+    assert rows == [
+        ("corrupt", "01_MASTERS/spot_30s_v2.mov"),
+        ("missing", "05_DELIVERABLES/spot_30s_old.mp4"),
+        ("added", "05_DELIVERABLES/spot_30s_v3.mp4"),
+    ]
+    assert 'data-change="' not in r.text  # the scan-diff table is replaced
+    assert "Accept as new version" in r.text and "Postpone" in r.text
 
 
 def test_detail_unknown_project_is_404(env: Env) -> None:

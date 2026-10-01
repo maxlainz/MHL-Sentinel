@@ -285,6 +285,17 @@ class ReviewItem:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifyResult:
+    """One file of a ``verify`` job (hito 4): ``ok``, ``added`` (fine), ``modified``,
+    ``corrupt`` or ``missing`` (vault note `Distinguir corrupción de modificación por mtime`)."""
+
+    rel_path: str
+    expected: str | None
+    actual: str | None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
 class LogEntry:
     job_id: int
     ts: str
@@ -689,6 +700,14 @@ class Database:
             )
             return cur.rowcount
 
+    def has_open_job(self, project_id: int | None, kind: JobKind) -> bool:
+        """True if a job of ``kind`` for the project is ``queued`` or ``running``."""
+        row = self._query_one(
+            "SELECT 1 FROM jobs WHERE kind = ? AND project_id IS ? AND state IN (?, ?) LIMIT 1",
+            (kind.value, project_id, JobState.QUEUED.value, JobState.RUNNING.value),
+        )
+        return row is not None
+
     def count_jobs(self, state: JobState) -> int:
         row = self._query_one("SELECT COUNT(*) FROM jobs WHERE state = ?", (state.value,))
         return int(row[0]) if row is not None else 0
@@ -756,6 +775,36 @@ class Database:
     def clear_review_items(self, project_id: int) -> None:
         with self.transaction() as conn:
             conn.execute("DELETE FROM review_items WHERE project_id = ?", (project_id,))
+
+    # -- verify_results (hito 4) -------------------------------------------------------------
+
+    def replace_verify_results(
+        self, job_id: int, project_id: int, rows: Iterable[VerifyResult]
+    ) -> None:
+        """Results of one verify job; earlier jobs of the project keep theirs."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM verify_results WHERE job_id = ?", (job_id,))
+            conn.executemany(
+                "INSERT INTO verify_results (job_id, project_id, rel_path, expected, actual,"
+                " status) VALUES (?, ?, ?, ?, ?, ?)",
+                ((job_id, project_id, r.rel_path, r.expected, r.actual, r.status) for r in rows),
+            )
+
+    def get_verify_results(self, project_id: int, job_id: int | None = None) -> list[VerifyResult]:
+        """Results of ``job_id``, or of the project's latest verify job if ``None``."""
+        if job_id is None:
+            row = self._query_one(
+                "SELECT MAX(job_id) FROM verify_results WHERE project_id = ?", (project_id,)
+            )
+            if row is None or row[0] is None:
+                return []
+            job_id = int(row[0])
+        rows = self._query(
+            "SELECT rel_path, expected, actual, status FROM verify_results"
+            " WHERE project_id = ? AND job_id = ? ORDER BY rel_path",
+            (project_id, job_id),
+        )
+        return [VerifyResult(r["rel_path"], r["expected"], r["actual"], r["status"]) for r in rows]
 
     # -- settings_kv -------------------------------------------------------------------------
 

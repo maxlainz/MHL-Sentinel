@@ -11,6 +11,9 @@ from pathlib import Path
 from mhl_sentinel.models import ProjectCandidate
 
 HISTORY_DIR = "ascmhl"
+# Never projects nor stray entries: the root history of the archive (D29) lives in
+# <root>/ascmhl/, and a superseded history (D50) is never a project either.
+RESERVED_NAMES: frozenset[str] = frozenset({HISTORY_DIR, "ascmhl_superseded"})
 
 
 def _list_dirs_and_others(path: Path, ignore_prefixes: str) -> tuple[list[str], list[str]]:
@@ -23,7 +26,7 @@ def _list_dirs_and_others(path: Path, ignore_prefixes: str) -> tuple[list[str], 
     try:
         with os.scandir(path) as it:
             for entry in it:
-                if entry.name.startswith(tuple(ignore_prefixes)):
+                if entry.name.startswith(tuple(ignore_prefixes)) or entry.name in RESERVED_NAMES:
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     dirs.append(entry.name)

@@ -170,8 +170,21 @@ def review_rows(db: Database, project: ProjectRow, tz: ZoneInfo) -> list[ReviewR
     return rows
 
 
+VERIFICATION_PREFIX = "verification:"  # sealer.VERIFICATION_PREFIX
+
+
+def is_verification_review(project: ProjectRow) -> bool:
+    return project.state is ProjectState.NEEDS_REVIEW and (project.review_reason or "").startswith(
+        VERIFICATION_PREFIX
+    )
+
+
 def review_summary(db: Database, project: ProjectRow) -> str:
-    """``2 modified, 1 deleted`` from the review items; else the stored reason's head."""
+    """``2 modified, 1 deleted`` from the review items; else the stored reason's head.
+
+    A failed periodic verification shows its own counts (``verification: 1 corrupt``)."""
+    if is_verification_review(project):
+        return (project.review_reason or "").split(";", 1)[0]
     counts = Counter(i.change for i in db.get_review_items(project.id))
     parts = [
         f"{counts[kind]} {kind.value}"
@@ -218,6 +231,50 @@ def status_text(
     if state is ProjectState.IGNORED:
         return "ignored"
     return "problem: " + (project.error or "unknown error") + " · retried on the next round"
+
+
+_VERIFY_ORDER = {"corrupt": 0, "modified": 1, "missing": 2, "added": 3, "ok": 4}
+VERIFY_LABEL = {
+    "corrupt": "corrupt (changed without being saved)",
+    "modified": "modified",
+    "missing": "missing",
+    "added": "new file (fine)",
+    "ok": "ok",
+}
+
+
+@dataclass(slots=True)
+class VerifyRow:
+    status: str
+    label: str
+    rel_path: str
+
+
+@dataclass(slots=True)
+class VerifyView:
+    rows: list[VerifyRow] = field(default_factory=list)  # everything except ``ok``
+    ok: int = 0
+    when: str = ""
+
+
+def verify_view(db: Database, project: ProjectRow, tz: ZoneInfo) -> VerifyView:
+    """Latest verification of a project: problem rows first; ``ok`` files only counted."""
+    results = db.get_verify_results(project.id)
+    last = next(
+        (
+            j
+            for j in db.list_jobs(limit=200)
+            if j.project_id == project.id and j.kind is JobKind.VERIFY and j.finished_at
+        ),
+        None,
+    )
+    view = VerifyView(when=fmt_datetime(last.finished_at if last else None, tz))
+    for r in sorted(results, key=lambda r: (_VERIFY_ORDER.get(r.status, 5), r.rel_path)):
+        if r.status == "ok":
+            view.ok += 1
+        else:
+            view.rows.append(VerifyRow(r.status, VERIFY_LABEL.get(r.status, r.status), r.rel_path))
+    return view
 
 
 @dataclass(slots=True)

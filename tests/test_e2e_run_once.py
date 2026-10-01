@@ -93,7 +93,7 @@ def test_run_once_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         assert all(p.state is ProjectState.UNSEALED and p.preexisting for p in projects)
         assert db.list_jobs() == []
 
-    # 2. Seal everything.
+    # 2. Seal everything; the same run then writes the root references-only history (D29).
     out = cli("run-once", "--seal-all", "--ignore-working-hours")
     assert set(states(config).values()) == {ProjectState.SEALED}, out
     for rel in states(config):
@@ -102,6 +102,26 @@ def test_run_once_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         assert gen1.name.startswith("0001_")
         assert_xsd_valid(gen1)
         assert_verifies(project)
+    assert "root_manifest .: done" in out, out
+    (root_gen,) = manifests(archive)
+    assert_xsd_valid(root_gen)
+    refs = etree.parse(str(root_gen)).findall("m:references/m:hashlistreference/m:path", NS)
+    assert sorted(str(r.text).split("/ascmhl/")[0] for r in refs) == sorted(states(config))
+    info = run_cli("ascmhl", "info", "-v", archive)
+    assert info.returncode == 0, info.stdout + info.stderr
+    assert info.stdout.count("Child History at") == len(states(config)), info.stdout
+    # The loose README next to the false project (D49) is in no manifest: the reference
+    # reports it as a new file (exit 21). Prefix-ignored folders (_ @ # .) are not reported.
+    verify = run_cli("ascmhl-debug", "verify", archive)
+    assert verify.returncode == 21, verify.stdout + verify.stderr
+    report = verify.stdout + verify.stderr
+    assert report.count("found new file") == 1, report
+    assert "found new file SIN-CATEGORIA_CLIENTE-E/00_README.md" in report
+    (archive / "SIN-CATEGORIA_CLIENTE-E" / "00_README.md").unlink()
+    assert_verifies(archive)
+    with Database(config / "state.db") as db:
+        assert db.get_kv("root_manifest_stale") == "0"
+    assert "root_manifest" not in cli("run-once", "--ignore-working-hours")  # up to date
 
     # D39: legacy hashes inherited as verified next to our xxh128 original.
     (gen1,) = manifests(archive / B)
@@ -163,6 +183,11 @@ def test_run_once_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     assert_verifies(archive / A)
     info = run_cli("ascmhl", "info", "-v", archive / A)
     assert info.returncode == 0 and info.stdout.count("Generation ") == 1, info.stdout
+    # The root was rebuilt in the same run: its old generations referenced A's old manifests.
+    (root_gen,) = manifests(archive)
+    assert root_gen.name.startswith("0001_")
+    assert (archive / "ascmhl_superseded").is_dir()
+    assert_verifies(archive)
 
 
 def test_legacy_mismatch_blocks_the_first_seal(

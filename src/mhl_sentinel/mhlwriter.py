@@ -27,6 +27,7 @@ import contextlib
 import datetime as dt
 import os
 import platform
+import shutil
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -193,6 +194,8 @@ def write_root_references_generation(
     child_project_roots: Sequence[str | os.PathLike[str]],
     ignore_patterns: Sequence[str] = DEFAULT_IGNORE_PATTERNS,
     tool_version: str = "0.0.0",
+    *,
+    include_child_patterns: bool = False,
 ) -> Path:
     """Append a references-only generation to the history at ``archive_root``.
 
@@ -202,9 +205,20 @@ def write_root_references_generation(
     ``<hashes>`` element at all. No media file is read; only the child
     manifests are (C4 and the chain check done by ``MHLHistory.load_from_path``).
     ``<roothash>`` is omitted (optional in the XSD).
+
+    The root history is loaded without resolving its previous references: ``ascmhl`` 1.2
+    asserts that every referenced manifest file still exists in its child history, which is
+    false right after "Accept as new version" retired a project's history (and H12: a reference
+    to a vanished child stops the resolution). The new generation only references the children
+    given here, so a regeneration repairs both cases.
+
+    ``include_child_patterns``: the root manifest's ignore patterns also get the latest
+    patterns of every referenced child. ``ascmhl verify`` at the root walks the whole tree with
+    the root's patterns only, so a file a project excludes (e.g. ``*.md``) would otherwise be
+    reported as a new file.
     """
     root = Path(archive_root).resolve()
-    history = MHLHistory.load_from_path(str(root))
+    history = _RootHistory.load_from_path(str(root))
 
     references: list[tuple[str, str]] = []
     for child_root in child_project_roots:
@@ -220,7 +234,13 @@ def write_root_references_generation(
     if not references:
         raise MHLWriteError("a references-only manifest needs at least one reference")
 
-    patterns = MHLIgnoreSpec(history.latest_ignore_patterns(), list(ignore_patterns))
+    wanted = list(ignore_patterns)
+    if include_child_patterns:
+        for child_root in child_project_roots:
+            rel_child = os.path.relpath(Path(child_root).resolve(), root)
+            child_patterns = history.child_history_mappings[rel_child].latest_ignore_patterns()
+            wanted.extend(p for p in child_patterns or [] if p not in wanted)
+    patterns = MHLIgnoreSpec(history.latest_ignore_patterns(), wanted)
     xml = _references_only_manifest(
         _creator_info(tool_version), patterns.get_pattern_list(), references
     )
@@ -233,7 +253,35 @@ def write_root_references_generation(
     return _commit(history, MHLHashList(), write)
 
 
+def retire_history(folder: str | os.PathLike[str], now: dt.datetime) -> Path | None:
+    """D17, D50: move ``<folder>/ascmhl/`` to ``<folder>/ascmhl_superseded/<YYYY-MM-DDTHHMMSSZ>/``
+    (never deleted). Used for projects (Accept as new version) and for the archive root (a
+    root history whose older generations reference manifests that no longer exist). Returns the
+    new location, or ``None`` if there was no history."""
+    base = Path(folder)
+    asc_dir = base / "ascmhl"
+    if not asc_dir.exists():
+        return None
+    stamp = now.strftime("%Y-%m-%dT%H%M%SZ")
+    target = base / SUPERSEDED_DIR / stamp
+    n = 1
+    while target.exists():
+        target = base / SUPERSEDED_DIR / f"{stamp}-{n}"
+        n += 1
+    target.parent.mkdir(exist_ok=True)
+    shutil.move(str(asc_dir), str(target))
+    return target
+
+
 # --- internals -------------------------------------------------------------
+
+
+class _RootHistory(MHLHistory):  # type: ignore[misc]  # ascmhl ships no type hints
+    """``MHLHistory`` that does not resolve the references of its own manifests (see
+    :func:`write_root_references_generation`). Child histories are plain ``MHLHistory``."""
+
+    def _resolve_hash_list_references(self) -> None:
+        return None
 
 
 def _finish(history: Any, session: Any, tool_version: str) -> Path:

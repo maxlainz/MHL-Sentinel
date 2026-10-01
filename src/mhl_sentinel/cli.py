@@ -1,7 +1,9 @@
 """Command line: ``mhl-sentinel`` (docs/arquitectura.md, ``cli.py``).
 
-``run-once`` is the hito 1 way of running the whole pipeline once: scan cycle, then the queued
-jobs one after another, only outside working hours (D33) unless ``--ignore-working-hours``.
+``run-once`` is the hito 1 way of running the whole pipeline once: scan cycle, scheduling of the
+periodic verifications and of the root manifest (hito 4), then the queued jobs one after another,
+only outside working hours (D33) unless ``--ignore-working-hours``. When the queue is empty and a
+generation made the root manifest stale, the ``root_manifest`` job is queued and run too.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from datetime import datetime
 import click
 import yaml
 
-from mhl_sentinel import __version__, sealer
+from mhl_sentinel import __version__, rootmanifest, sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import Settings, load_settings
 from mhl_sentinel.db import Database, NetworkFilesystemError
@@ -100,17 +102,28 @@ def run_once(ignore_working_hours: bool, seal_all: bool) -> None:
         stop = threading.Event()
         hours = None if ignore_working_hours else WorkingHours.from_settings(settings)
         gate = WorkingHoursGate(hours, stop)
-        while (job := db.next_job(utcnow())) is not None:
+        working = hours is not None and hours.is_working(utcnow())
+        for rel, kind in sealer.schedule_maintenance(db, settings, now=utcnow(), working=working):
+            click.echo(f"queued {kind} {rel}")
+        root_checked = False
+        while True:
+            job = db.next_job(utcnow())
+            if job is None:
+                # Seals and verifications of this run made the root manifest stale (once).
+                if root_checked or not sealer.schedule_root_manifest(db, settings, now=utcnow()):
+                    break
+                root_checked = True
+                continue
             if not gate.is_set():
                 click.echo("working hours: queued jobs left for later")
                 break
             target = db.get_project(job.project_id) if job.project_id is not None else None
-            label = target.rel_path if target else "-"
+            label = target.rel_path if target else "."
             sealer.run_job(db, settings, job, gate=gate, stop=stop)
             done = db.get_job(job.id)
             assert done is not None
             after = db.get_project(job.project_id) if job.project_id is not None else None
-            state = after.state if after else "-"
+            state = after.state if after else rootmanifest.last_root_manifest_at(db) or "-"
             extra = f" ({done.error})" if done.error else ""
             click.echo(f"job {job.id} {job.kind} {label}: {done.state} → {state}{extra}")
             if done.state is JobState.QUEUED:  # stopped by the working-hours gate

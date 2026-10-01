@@ -22,16 +22,18 @@ import logging
 import os
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from mhl_sentinel import sealer
+from mhl_sentinel import rootmanifest, sealer
 from mhl_sentinel.clock import to_iso, utcnow
+from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow
 from mhl_sentinel.events import EventBus
-from mhl_sentinel.models import JobState, ProjectState
+from mhl_sentinel.models import JobKind, JobState, ProjectState
 from mhl_sentinel.schedule import WorkingHours
 from mhl_sentinel.settings_ref import SettingsRef
 
@@ -269,7 +271,9 @@ class Supervisor:
             self._scan_requested.clear()
             before = self._project_states()
             try:
-                summary = await asyncio.to_thread(sealer.run_scan_cycle, self.db, settings, now=now)
+                summary, maintenance = await asyncio.to_thread(
+                    self._scan_and_schedule, settings, now, working
+                )
             except sealer.ArchiveUnavailableError as exc:
                 self._archive_reachable = False
                 self.bus.publish("archive.unreachable", {"root": str(settings.archive_root)})
@@ -284,16 +288,27 @@ class Supervisor:
                     missing=len(summary.missing),
                     enqueued=len(summary.enqueued),
                     errors=len(summary.errors),
+                    verify_enqueued=sum(k is JobKind.VERIFY for _, k in maintenance),
+                    root_enqueued=any(k is JobKind.ROOT_MANIFEST for _, k in maintenance),
                 )
                 for error in summary.errors:
                     self._publish_log("warning", error)
                 for orphan in summary.orphans:
                     self._publish_log("warning", f"orphan manifest set aside: {orphan}")
-                if summary.enqueued:
+                if summary.enqueued or maintenance:
                     self._wake.set()
             self._publish_state_diff(before, self._project_states())
         payload["last_cycle_at"] = to_iso(self._last_cycle_at) if self._last_cycle_at else None
         self.bus.publish("cycle.finished", payload)
+
+    def _scan_and_schedule(
+        self, settings: Settings, now: datetime, working: bool
+    ) -> tuple[sealer.ScanSummary, list[tuple[str, JobKind]]]:
+        """Scan cycle, then verifications (never during working hours, D33) and the root
+        manifest job (hito 4). Runs in a worker thread."""
+        summary = sealer.run_scan_cycle(self.db, settings, now=now)
+        maintenance = sealer.schedule_maintenance(self.db, settings, now=now, working=working)
+        return summary, maintenance
 
     # -- hasher thread -----------------------------------------------------------------------
 
@@ -370,17 +385,21 @@ class Supervisor:
             state = done.state if done is not None else JobState.FAILED
             error = done.error if done is not None else "job vanished"
             kind = "job.failed" if state is JobState.FAILED else "job.finished"
-            self.bus.publish(
-                kind,
-                {
-                    "id": job.id,
-                    "kind": str(job.kind),
-                    "project_id": job.project_id,
-                    "rel_path": rel_path,
-                    "state": str(state),
-                    "error": error,
-                },
-            )
+            payload: dict[str, Any] = {
+                "id": job.id,
+                "kind": str(job.kind),
+                "project_id": job.project_id,
+                "rel_path": rel_path,
+                "state": str(state),
+                "error": error,
+            }
+            if job.kind is JobKind.VERIFY and job.project_id is not None:
+                results = self.db.get_verify_results(job.project_id, job.id)
+                payload["verify"] = dict(Counter(r.status for r in results))
+            self.bus.publish(kind, payload)
+            if job.kind is JobKind.ROOT_MANIFEST and state is JobState.DONE:
+                at = rootmanifest.last_root_manifest_at(self.db)
+                self.bus.publish(rootmanifest.ROOT_UPDATED_EVENT, {"at": at})
             self._publish_state_diff(before, self._project_states())
         return True
 

@@ -19,7 +19,22 @@
 
   {% include "_progress.html" %}
 
-  {% if can_review %}
+  {% if can_review and verification %}
+  <h3>Periodic verification{% if verification.when %} of {{ verification.when }}{% endif %}</h3>
+  <p>{{ p.review_reason.split(';', 1)[0] }}. {{ verification.ok }} file{{ '' if verification.ok == 1 else 's' }} OK.</p>
+  {% if verification.rows %}
+  <div class="overflow-auto">
+  <table>
+    <thead><tr><th>Status</th><th>File</th></tr></thead>
+    <tbody>
+      {% for r in verification.rows %}
+      <tr data-verify="{{ r.status }}"><td>{{ r.label }}</td><td class="path">{{ r.rel_path }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+  {% elif can_review %}
   <h3>Changed since the last seal</h3>
   {% if review %}
   <div class="overflow-auto">
