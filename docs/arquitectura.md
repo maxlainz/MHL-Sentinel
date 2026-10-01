@@ -73,3 +73,24 @@ port: 8080                        # solo env
 - El contenedor corre con `TZ=UTC` (ascmhl escribe fechas con el offset actual); la zona del horario laboral es `settings.timezone` y es la que muestra la GUI.
 - Todo manifiesto que se escriba en tests se valida con `ascmhl-debug verify` y `xsd-schema-check` (norma `conformidad-mhl.md`).
 - Nada de rutas absolutas ni nombres del estudio en código, tests ni docs (normas `sin-rutas-absolutas.md`, `repo-publico.md`).
+
+## Hito 2: `events.py`, `supervisor.py`, `serve`
+- `clock.py`: `utcnow()`, `utcnow_iso()`, `to_iso()`, `from_iso()` (ISO-8601 UTC con microsegundos y sufijo `Z`).
+- `events.py`: `EventBus` seguro entre hilos: `publish(kind: str, payload: dict, *, job_id: int | None = None)` (si hay `job_id`, también `db.log`), `subscribe() -> asyncio.Queue[Event]` / `unsubscribe(q)` para SSE. Kinds: `cycle.started|finished`, `project.state` (`{id, rel_path, state}`), `job.started|progress|finished|failed`, `archive.unreachable|ok`, `log`.
+- `supervisor.py`: `Supervisor(db, settings, bus)`: `start()`/`stop()` (coroutines; `stop` cierra `gate`, pone `stop_event`, espera al hilo hasher ≤ 30 s). Tarea asyncio `_loop`: cada `tick_seconds` (60) → `gate` abierta ⇔ no `is_working(now)`; si `gate` abierta o `scan_requested`: `run_scan_cycle` (en `asyncio.to_thread`), y `scan_requested=False`; cada `tick` publica `cycle.*`. Hilo hasher: `while not stop: job = db.next_job(); if job and gate.is_set(): sealer.run_job(...)` (sleep 5 s si no hay trabajo). `request_scan_now()` (D26: permitido en horario laboral; es solo scan). `status() -> SupervisorStatus(working_now, next_change, gate_open, current_job: JobRow | None, last_cycle_at, archive_reachable, queued_jobs: int)`. `archive_reachable`: `os.listdir(root)` con timeout 10 s en un hilo (montaje colgado). Al arrancar: `db.requeue_running_jobs()`. SIGTERM/SIGINT → `stop()`.
+- `cli.py serve`: carga settings, abre DB, construye `EventBus`, `Supervisor`, `web.create_app(...)`; `uvicorn` programático en `0.0.0.0:settings.port`, con `lifespan` que arranca y para el supervisor. Un solo proceso.
+
+## Hito 3: `web/` (FastAPI + Jinja2 + HTMX + SSE; inglés, D12)
+`web/app.py`: `create_app(db, settings_ref, supervisor, bus) -> FastAPI` (`settings_ref` es un contenedor mutable para que *Save* en Ajustes recargue sin reiniciar; los cambios en `working_hours`/`timezone` los lee el supervisor en el siguiente tick). Plantillas en `web/templates/`, estáticos en `web/static/` (ya vendorizados: `pico.min.css`, `htmx.min.js`, `htmx-ext-sse.js`). Sin login (D35).
+| Ruta | Qué |
+|---|---|
+| `GET /` | Pantalla única (D11): cabecera (Archive OK/KO · working hours now? · next change · current job), contadores (projects, needs review, unsealed, queued), lista de proyectos con semáforo y fecha; botones `Run scan now`, `Settings`. Entradas fuera de sitio (D49) en un aviso plegable. Lista = fragmento HTMX refrescado por SSE (`hx-ext="sse"`, evento `project.state`/`cycle.finished` → `hx-get /fragments/projects`). |
+| `GET /fragments/projects`, `GET /fragments/header` | Fragmentos HTMX. |
+| `GET /projects/{id}` | Detalle: generaciones (desde `MHLHistory`), ficheros, estado; si `needs_review`, el boceto D46 con `Accept as new version` / `Postpone`; si `unsealed`, `Seal`; siempre `Ignore`/`Unignore`. Trabajo en curso con barra de progreso (SSE `job.progress`). |
+| `POST /projects/{id}/seal|ignore|unignore|accept|postpone` | Llaman a `sealer.request_*`; devuelven el fragmento del proyecto. |
+| `POST /scan-now` | `supervisor.request_scan_now()`. |
+| `GET /settings`, `POST /settings` | Boceto D45. Valida con `Settings`; `save_yaml`; recarga `settings_ref`. Campos solo-env deshabilitados. |
+| `GET /events` | SSE (`sse-starlette`): un evento por `Event` del bus, `event: <kind>`, `data: json`. |
+| `GET /healthz` | 200 si DB escribible y `archive_reachable`; 503 si no. JSON `{status, archive, db, version}`. |
+| `GET /api/status`, `GET /api/projects` | JSON para scripts. |
+Semáforo: verde `sealed`; ámbar `unsealed`/`changed`/`queued`/`hashing`; rojo `needs_review`/`error`; gris `ignored`. Fechas en `settings.timezone`. Tamaños legibles (GB). Textos para producción (D10): nada de hashes ni rutas absolutas en la pantalla principal.
