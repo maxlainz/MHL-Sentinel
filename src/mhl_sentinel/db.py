@@ -24,7 +24,7 @@ from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, Project
 
 NETWORK_FS_TYPES: frozenset[str] = frozenset({"cifs", "smb3", "smbfs", "nfs", "nfs4", "fuse.sshfs"})
 PROC_MOUNTS = Path("/proc/mounts")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class NetworkFilesystemError(RuntimeError):
@@ -188,11 +188,19 @@ CREATE TABLE settings_kv (
 ) WITHOUT ROWID;
 """
 
+# v2 (D58, D63): a project whose folder vanished keeps its row as ``missing`` with the date it was
+# first missed and the state to go back to; a job may run inside working hours (Verify now).
+_SCHEMA_V2 = """
+ALTER TABLE projects ADD COLUMN missing_since TEXT;
+ALTER TABLE projects ADD COLUMN state_before_missing TEXT;
+ALTER TABLE jobs ADD COLUMN bypass_hours INTEGER NOT NULL DEFAULT 0;
+"""
+
 # Index i holds the script that takes user_version from i to i + 1. A future schema change
 # appends a script here (never edits an old one): a database left by the previous image is
 # migrated forward on the next start (auto-updated container, /config persists). Each script runs
 # with the ``user_version`` bump in one transaction, so a kill mid-migration leaves the old version.
-MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1,)
+MIGRATIONS: tuple[str, ...] = (_SCHEMA_V1, _SCHEMA_V2)
 
 _TERMINAL_JOB_STATES = (JobState.DONE, JobState.FAILED, JobState.CANCELLED)
 _PROJECT_COLUMNS: frozenset[str] = frozenset(
@@ -210,6 +218,8 @@ _PROJECT_COLUMNS: frozenset[str] = frozenset(
         "total_bytes",
         "error",
         "review_reason",
+        "missing_since",
+        "state_before_missing",
     }
 )
 
@@ -232,12 +242,16 @@ class ProjectRow:
     total_bytes: int | None
     error: str | None
     review_reason: str | None
+    missing_since: str | None = None  # D58: first scan that did not find the folder
+    state_before_missing: ProjectState | None = None  # D58: where Retry/reappearance go back
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> ProjectRow:
         data = dict(row)
         data["state"] = ProjectState(data["state"])
         data["preexisting"] = bool(data["preexisting"])
+        before = data.get("state_before_missing")
+        data["state_before_missing"] = ProjectState(before) if before is not None else None
         return cls(**data)
 
 
@@ -257,6 +271,7 @@ class JobRow:
     bytes_done: int
     bytes_total: int
     error: str | None
+    bypass_hours: bool = False  # D63: runs even while the working-hours gate is closed
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> JobRow:
@@ -264,6 +279,7 @@ class JobRow:
         data["kind"] = JobKind(data["kind"])
         data["trigger"] = Trigger(data["trigger"])
         data["state"] = JobState(data["state"])
+        data["bypass_hours"] = bool(data.get("bypass_hours", 0))
         return cls(**data)
 
 
@@ -483,6 +499,20 @@ class Database:
                 (state.value, error, review_reason, project_id),
             )
 
+    def rename_project(self, project_id: int, rel_path: str, name: str) -> None:
+        """D62: the folder was moved or renamed; the row (history, caches, jobs) follows it."""
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE projects SET rel_path = ?, name = ? WHERE id = ?",
+                (rel_path, name, project_id),
+            )
+
+    def delete_project(self, project_id: int) -> None:
+        """D60 (Retire): drop the row; ``ON DELETE CASCADE`` removes its files, sealed files,
+        cached hashes, scans, review items, verify results and jobs (with their log)."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+
     def update_project_fields(self, project_id: int, **fields: Any) -> None:
         """Update arbitrary ``projects`` columns (datetimes, enums and bools are converted)."""
         if not fields:
@@ -621,20 +651,30 @@ class Database:
         trigger: Trigger,
         priority: int,
         now: datetime,
+        *,
+        bypass_hours: bool = False,
     ) -> int:
         """Queue a job; if one of the same kind for the same project is queued or running,
-        return its id instead (no duplicates)."""
+        return its id instead (no duplicates). A manual request finding a queued automatic one
+        promotes it (trigger, priority, ``bypass_hours``): e.g. Verify now (D63) over the
+        verification the scheduler already queued."""
         with self.transaction() as conn:
             existing = conn.execute(
-                "SELECT id FROM jobs WHERE kind = ? AND project_id IS ? AND state IN (?, ?)"
+                "SELECT id, state FROM jobs WHERE kind = ? AND project_id IS ? AND state IN (?, ?)"
                 " ORDER BY id LIMIT 1",
                 (kind.value, project_id, JobState.QUEUED.value, JobState.RUNNING.value),
             ).fetchone()
             if existing is not None:
-                return int(existing[0])
+                if trigger is Trigger.MANUAL and existing["state"] == JobState.QUEUED.value:
+                    conn.execute(
+                        "UPDATE jobs SET trigger = ?, priority = MAX(priority, ?),"
+                        " bypass_hours = MAX(bypass_hours, ?) WHERE id = ?",
+                        (trigger.value, priority, int(bypass_hours), existing["id"]),
+                    )
+                return int(existing["id"])
             cur = conn.execute(
-                "INSERT INTO jobs (kind, project_id, trigger, state, priority, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs (kind, project_id, trigger, state, priority, created_at,"
+                " bypass_hours) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     kind.value,
                     project_id,
@@ -642,7 +682,28 @@ class Database:
                     JobState.QUEUED.value,
                     priority,
                     to_iso(now),
+                    int(bypass_hours),
                 ),
+            )
+            assert cur.lastrowid is not None
+            return cur.lastrowid
+
+    def record_finished_job(
+        self,
+        kind: JobKind,
+        project_id: int | None,
+        trigger: Trigger,
+        state: JobState,
+        now: datetime,
+    ) -> int:
+        """Insert a job that is already over (``started_at = finished_at = now``); never seen by
+        the hasher. Used for Retire (D60), whose job row is the only trace left."""
+        stamp = to_iso(now)
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "INSERT INTO jobs (kind, project_id, trigger, state, priority, created_at,"
+                " started_at, finished_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+                (kind.value, project_id, trigger.value, state.value, stamp, stamp, stamp),
             )
             assert cur.lastrowid is not None
             return cur.lastrowid
@@ -651,11 +712,14 @@ class Database:
         row = self._query_one("SELECT * FROM jobs WHERE id = ?", (job_id,))
         return JobRow.from_row(row) if row is not None else None
 
-    def next_job(self, now: datetime) -> JobRow | None:
-        """Highest-priority queued job, oldest first. ``now`` is reserved for delayed jobs."""
+    def next_job(self, now: datetime, *, bypass_only: bool = False) -> JobRow | None:
+        """Highest-priority queued job, oldest first. ``now`` is reserved for delayed jobs.
+        ``bypass_only``: only jobs allowed inside working hours (D63, the gate is closed)."""
         del now
+        extra = " AND bypass_hours = 1" if bypass_only else ""
         row = self._query_one(
-            "SELECT * FROM jobs WHERE state = ? ORDER BY priority DESC, created_at, id LIMIT 1",
+            f"SELECT * FROM jobs WHERE state = ?{extra}"
+            " ORDER BY priority DESC, created_at, id LIMIT 1",
             (JobState.QUEUED.value,),
         )
         return JobRow.from_row(row) if row is not None else None

@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import importlib.util
 import sys
+import threading
 import time
 from collections.abc import Callable, Coroutine, Iterator
 from datetime import UTC, datetime, timedelta
@@ -341,9 +342,10 @@ def test_cancel_aborts_the_running_manual_seal(tmp_path: Path) -> None:
                 assert after is not None and after.state is ProjectState.UNSEALED
                 assert not (project / "ascmhl").exists()
 
-                # A verification or an automatic append, if it were running, is never cancelled.
+                # A scheduled verification or an automatic seal, if it were running, is never
+                # cancelled (a manual Verify now is, D63).
                 for kind, trigger in (
-                    (JobKind.VERIFY, Trigger.MANUAL),
+                    (JobKind.VERIFY, Trigger.AUTO),
                     (JobKind.SEAL, Trigger.AUTO),
                 ):
                     with sup._lock:
@@ -488,3 +490,115 @@ def test_manual_scan_in_working_hours_schedules_no_verification(tmp_path: Path) 
             assert sealer.schedule_verifications(db, settings, now=evening, working=False)
 
     run(body)
+
+
+def test_verify_now_runs_inside_working_hours_and_nothing_else_does(tmp_path: Path) -> None:
+    """D63: with the gate closed the hasher only takes ``bypass_hours`` jobs, runs them with a
+    gate of its own (never paused) and is woken by ``notify_job_queued``."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sealer.run_scan_cycle(db, settings, now=utcnow())
+            first, *others = db.list_projects()
+            assert others, "the fixture builds more than one project"
+            sealer.request_seal(db, first.id, utcnow())
+            job = db.next_job(utcnow())
+            assert job is not None
+            opened = threading.Event()
+            opened.set()
+            sealer.run_job(db, settings, job, gate=opened, stop=threading.Event())
+            assert db.get_project(first.id).state is ProjectState.SEALED  # type: ignore[union-attr]
+
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                EventBus(db),
+                tick_seconds=0.05,
+                idle_seconds=5.0,  # only notify_job_queued wakes the hasher in time
+                now_fn=lambda: NOON,
+            )
+            await sup.start()
+            try:
+                await until(lambda: sup.status().archive_reachable)
+                await until(lambda: sup._fs_recovered.is_set())
+                assert sup.status().working_now and not sup.status().gate_open
+                seal_id = sealer.request_seal(db, others[0].id, utcnow())  # waits for the night
+                time.sleep(1.1)  # distinct generation file names
+                verify_id = sealer.request_verify_now(db, first.id, utcnow())
+                sup.notify_job_queued()
+
+                def verified() -> bool:
+                    job = db.get_job(verify_id)
+                    return job is not None and job.state is JobState.DONE
+
+                await until(verified)
+                await until(lambda: sup.status().current_job is None)
+                after = db.get_project(first.id)
+                assert after is not None and after.state is ProjectState.SEALED
+                assert after.last_verified_at is not None and after.last_generation_no == 2
+                seal = db.get_job(seal_id)
+                assert seal is not None and seal.state is JobState.QUEUED and seal.files_done == 0
+
+                # A running Verify now is the owner's request: Cancel applies (D57, D63).
+                verify = db.get_job(verify_id)
+                assert verify is not None
+                with sup._lock:
+                    sup._current_job = verify
+                try:
+                    assert sup.request_cancel(first.id)
+                finally:
+                    with sup._lock:
+                        sup._current_job = None
+                        sup._cancel_event.clear()
+            finally:
+                await sup.stop()
+
+    run(body)
+
+
+def test_a_paused_job_yields_to_verify_now_and_to_a_vanished_folder(tmp_path: Path) -> None:
+    """D63: a job paused by the closed gate would hold the single hasher until the evening, so a
+    Verify now asks it to go back to the queue; D58/D62: so does a job whose folder vanished."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+    with Database(settings.db_path) as db:
+        sealer.run_scan_cycle(db, settings, now=utcnow())
+        first, second, *_ = db.list_projects()
+        sup = Supervisor(db, SettingsRef(settings), EventBus(db), now_fn=lambda: NOON)
+        assert not sup.gate.is_set()  # never started: closed, like inside working hours
+        seal_id = sealer.request_seal(db, first.id, utcnow())
+        seal = db.get_job(seal_id)
+        assert seal is not None
+        with sup._lock:
+            sup._current_job, sup._current_rel_path = seal, first.rel_path
+
+        sup.notify_job_queued()  # nothing allowed inside working hours is waiting
+        assert not sup._yield_event.is_set()
+        sup._yield_if_project_gone()  # its folder is still there
+        assert not sup._yield_event.is_set()
+
+        db.set_state(second.id, ProjectState.SEALED)
+        db.update_project_fields(second.id, last_generation_no=1)
+        sealer.request_verify_now(db, second.id, utcnow())
+        sup.notify_job_queued()
+        assert sup._yield_event.is_set()
+
+        sup._yield_event.clear()
+        db.update_project_fields(first.id, state=ProjectState.MISSING)
+        sup._yield_if_project_gone()
+        assert sup._yield_event.is_set()
+
+        # The yield reaches the job as an ordinary stop: back in the queue, nothing written.
+        db.update_project_fields(first.id, state=ProjectState.QUEUED)
+        gate = threading.Event()
+        gate.set()
+        sealer.run_job(db, settings, seal, gate=gate, stop=sup._yield_event)
+        again = db.get_job(seal_id)
+        assert again is not None and again.state is JobState.QUEUED
+        assert not (archive / first.rel_path / "ascmhl").exists()

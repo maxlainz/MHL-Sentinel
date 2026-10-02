@@ -9,7 +9,16 @@
   time (D34), only while the gate is open. Closing the gate pauses the read; ``stop()`` makes the
   current job raise ``Stopped`` at the next block, so it goes back to ``queued`` with its
   checkpoints and no generation is written. ``request_cancel(project_id)`` (the Cancel button,
-  D57) aborts the current manual Seal/Accept the same way, but the job ends ``cancelled``.
+  D57) aborts the current manual Seal/Accept/Verify now the same way, but the job ends
+  ``cancelled``.
+- A job with ``bypass_hours`` (Verify now, D63) is the exception to the gate: the hasher takes
+  it while the gate is closed (and only such jobs then), and runs it with a gate of its own that
+  is always open, so the working hours never pause it. A job paused by the closed gate would
+  hold the single hasher until the evening, so a Verify now asks it to yield: it goes back to
+  ``queued`` with its checkpoints, exactly as on ``stop()``.
+- A job whose project the scan cycle finds ``missing`` (D58) or moved (D62) meanwhile is asked to
+  yield the same way, so it does not sit paused (or fail file after file) on a folder that is
+  gone, and Retire (D60) is not blocked by it.
 
 Every exception inside a tick or a job is logged and published as a ``log`` event; nothing kills
 the loop or the thread.
@@ -49,6 +58,18 @@ ARCHIVE_TIMEOUT_SECONDS = 10.0
 STOP_TIMEOUT_SECONDS = 8.0
 IDLE_SECONDS = 5.0
 PROGRESS_MIN_INTERVAL = 0.5  # seconds between two job.progress events of the same job
+
+
+class _AnySet:
+    """What the job sees as ``stop``: SIGTERM or a yield request for the current job only."""
+
+    __slots__ = ("_flags",)
+
+    def __init__(self, *flags: threading.Event) -> None:
+        self._flags = flags
+
+    def is_set(self) -> bool:
+        return any(f.is_set() for f in self._flags)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,8 +125,13 @@ class Supervisor:
         self.now_fn = now_fn
 
         self.gate = threading.Event()  # open ⇔ outside working hours
+        self._open_gate = threading.Event()  # D63: what a bypass_hours job sees, always open
+        self._open_gate.set()
         self.stop_event = threading.Event()
         self._cancel_event = threading.Event()  # D57: Cancel for the current job only
+        # Current job only: back to the queue as on stop() (Verify now waiting, project gone).
+        self._yield_event = threading.Event()
+        self._current_rel_path: str | None = None
         self._wake = threading.Event()  # wakes the idle hasher (new job, stop)
         self._scan_requested = threading.Event()
         self._task: asyncio.Task[None] | None = None
@@ -189,8 +215,8 @@ class Supervisor:
 
     def request_cancel(self, project_id: int) -> bool:
         """Cancel button on a running job (D57): abort the current job at the next file if it is
-        the project's manual ``seal`` or ``accept_new_version``; True if it was asked to stop.
-        Verifications and automatic jobs are never cancelled. Thread-safe."""
+        the project's manual ``seal``, ``accept_new_version`` or ``verify`` (Verify now, D63);
+        True if it was asked to stop. Automatic jobs are never cancelled. Thread-safe."""
         with self._lock:
             job = self._current_job
             if job is None or job.project_id != project_id or not sealer.is_cancellable(job):
@@ -200,8 +226,29 @@ class Supervisor:
         return True
 
     def notify_job_queued(self) -> None:
-        """Wake the idle hasher now instead of after ``idle_seconds`` (e.g. after Seal)."""
+        """Wake the idle hasher now instead of after ``idle_seconds`` (e.g. after Seal). Also
+        inside working hours: a Verify now (D63) runs with the gate closed, and a job paused by
+        the gate is asked to yield to it (back to the queue, checkpoints kept)."""
+        if not self.gate.is_set() and self.db.next_job(self.now_fn(), bypass_only=True):
+            with self._lock:
+                job = self._current_job
+                if job is not None and not job.bypass_hours:
+                    self._yield_event.set()
+                    log.info("job %d yields to a Verify now (working hours)", job.id)
         self._wake.set()
+
+    def _yield_if_project_gone(self) -> None:
+        """After a scan cycle: the current job's project went ``missing`` or was moved."""
+        with self._lock:
+            job, rel_path = self._current_job, self._current_rel_path
+        if job is None or job.project_id is None:
+            return
+        project = self.db.get_project(job.project_id)
+        if project is None or project.state is ProjectState.MISSING or project.rel_path != rel_path:
+            with self._lock:
+                if self._current_job is job:
+                    self._yield_event.set()
+                    log.info("job %d stops: its project folder is gone or moved", job.id)
 
     @property
     def running(self) -> bool:
@@ -336,6 +383,8 @@ class Supervisor:
                     missing=len(summary.missing),
                     enqueued=len(summary.enqueued),
                     errors=len(summary.errors),
+                    moved=len(summary.moved),
+                    reappeared=len(summary.reappeared),
                     verify_enqueued=sum(k is JobKind.VERIFY for _, k in maintenance),
                     root_enqueued=any(k is JobKind.ROOT_MANIFEST for _, k in maintenance),
                 )
@@ -343,6 +392,12 @@ class Supervisor:
                     self._publish_log("warning", error)
                 for orphan in summary.orphans:
                     self._publish_log("warning", f"orphan manifest set aside: {orphan}")
+                for old, new in summary.moved:  # D62
+                    self._publish_log("warning", f"project moved: {old} → {new}")
+                for rel in summary.reappeared:  # D58
+                    self._publish_log("warning", f"project back on disk: {rel}")
+                if summary.missing or summary.moved:
+                    self._yield_if_project_gone()
                 if summary.enqueued or maintenance:
                     self._wake.set()
             self._publish_state_diff(before, self._project_states())
@@ -392,14 +447,15 @@ class Supervisor:
                 self._wake.clear()
 
     def _hasher_step(self) -> bool:
-        """Run the next job if the gate is open and the archive answers. True if one ran."""
+        """Run the next job if the archive answers: any job while the gate is open, only a
+        ``bypass_hours`` one (D63) while it is closed. True if one ran."""
         if (
-            not self.gate.is_set()
+            self.stop_event.is_set()
             or self._archive_reachable is not True
             or not self._fs_recovered.is_set()
         ):
             return False
-        job = self.db.next_job(self.now_fn())
+        job = self.db.next_job(self.now_fn(), bypass_only=not self.gate.is_set())
         if job is None:
             return False
         settings = self.settings_ref.get()
@@ -408,7 +464,9 @@ class Supervisor:
         with self._lock:
             self._current_job_id = job.id
             self._current_job = job
+            self._current_rel_path = rel_path
             self._cancel_event.clear()  # a Cancel meant for the previous job does not carry over
+            self._yield_event.clear()
         before = self._project_states()
         self.bus.publish(
             "job.started",
@@ -446,8 +504,8 @@ class Supervisor:
                 self.db,
                 settings,
                 job,
-                gate=self.gate,
-                stop=self.stop_event,
+                gate=self._open_gate if job.bypass_hours else self.gate,
+                stop=_AnySet(self.stop_event, self._yield_event),
                 now_fn=self.now_fn,
                 on_progress=on_progress,
                 cancel=self._cancel_event,
@@ -456,7 +514,9 @@ class Supervisor:
             with self._lock:
                 self._current_job_id = None
                 self._current_job = None
+                self._current_rel_path = None
                 self._cancel_event.clear()
+                self._yield_event.clear()
             done = self.db.get_job(job.id)
             state = done.state if done is not None else JobState.FAILED
             error = done.error if done is not None else "job vanished"

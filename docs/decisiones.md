@@ -312,7 +312,40 @@ Sealing
 - **Elección**: (1). El supervisor tiene un evento de cancelación por trabajo (se limpia al empezar cada uno); `Supervisor.request_cancel(project_id)` solo lo levanta si el trabajo en curso es de ese proyecto y es un `seal`/`accept_new_version` manual. El hasher ve «parar o cancelar» como una sola señal y la comprueba en cada bloque, en cada frontera de fichero (también cuando el siguiente sale de la caché) y mientras espera a que acabe el horario laboral. Al saltar: trabajo `cancelled`, proyecto a `unsealed` o a `needs_review` conservando `review_reason`, sin generación ni temporales (la generación solo se escribe tras el último fichero). Si coinciden SIGTERM y Cancel, gana Cancel. `sealer.request_cancel` sigue siendo solo para trabajos en cola y rechaza uno en marcha, para que ningún camino deje un trabajo a medio cancelar. Verificaciones y `append` automáticos nunca se cancelan.
 - 2026-10-01 (decisión del owner en el issue #10).
 
+## D58 — Proyecto desaparecido: estado `missing` al primer scan, cortafuegos solo con raíz vacía
+- **Contexto**: con los años un proyecto entero puede borrarse del archivo (expurgo o accidente); de ahí la utilidad del historial MHL de todo el archivo. Hasta ahora la carpeta ausente pasaba a `error "folder missing"`, se reintentaba sin fin y, como el `ascmhl/` vivía dentro de la carpeta, el historial desaparecía con ella: solo quedaban los hashes en la DB y las generaciones apartadas de la raíz (referencias y C4, sin hashes de ficheros).
+- **Opciones**: (1) «no encontrado» durante 3 rondas o 7 días antes de pedir decisión, con cortafuegos si faltan más del 20 %; (2) eliminado al primer scan; (3) solo manual. Cortafuegos: umbral del 20 %; solo raíz vacía o ilegible; ninguno.
+- **Elección**: (2) con cortafuegos mínimo. Estado nuevo `missing` desde el primer scan en que la carpeta no está (`missing_since`, se conserva el estado anterior en `state_before_missing`, la fila y sus `sealed_files` no se borran, los trabajos en cola se cancelan). Entra en «Needs your decision» con `Retire` y `Retry` (D60, D61). Si la raíz no se lee o lista cero proyectos teniendo la DB proyectos, la ronda cuenta como «archivo inaccesible» y ningún estado cambia. Si la carpeta vuelve (ronda o `Retry`), recupera su estado y, si tiene historial, se encola una verificación automática: si cuadra queda `sealed` sin preguntar; si no, revisión (D17). Un proyecto `missing` no se verifica ni lo referencia la raíz (D51).
+- 2026-10-02 (entrevista con `AskUserQuestion`).
+
+## D59 — Espejo del historial de cada proyecto en `/config/history/`
+- **Contexto**: el historial MHL debe sobrevivir al borrado del proyecto para poder descargarlo al dar de baja (D60) y para reconocer una carpeta movida (D62). Analogía: la librería de Silverstack vive aparte de las tarjetas.
+- **Opciones**: (1) copia espejo de `ascmhl/` en `/config`; (2) reconstruir un MHL desde la DB al detectar la eliminación (válido pero no es el original firmado en cadena); (3) solo la DB.
+- **Elección**: (1). Tras cada generación (seal, append, accept, verify) y en el scan cuando `ascmhl/` existe y el espejo falta o su cadena difiere (también historiales de otras herramientas), la app copia `ascmhl/` a `<config>/history/<proyecto>/ascmhl/` (KB; escritura atómica). Un `Accept as new version` aparta el espejo igual que el historial. El espejo nunca sustituye a la verificación de ficheros; es copia de seguridad del historial.
+- 2026-10-02.
+
+## D60 — `Retire` borra el registro y el espejo; único rastro, una línea en el log
+- **Contexto**: qué conservar de un proyecto que el estudio ha borrado a conciencia.
+- **Opciones**: (1) `Retire` + `Retry` conservando una sección «Dados de baja» con historial descargable; (2) añadir «Olvidar»; (3) solo informativo, baja automática.
+- **Elección**: del owner: `Retire` (dar de baja) y `Retry`. **Confirmar la baja borra todo**: la fila del proyecto y lo que cuelga de ella, la caché de hashes y el espejo del historial; no se conservan restos de lo que se ha eliminado a conciencia. Antes de confirmar, un diálogo ofrece `Retire`, `Retire and download MHL` (zip del `ascmhl/` espejado) o `Cancel`. El único rastro es una línea en el log de actividad («retired X», con fecha), que es registro de lo que hizo la app, no un resto del proyecto. La raíz se regenera sin el proyecto (D51). No hay botón de baja anticipada en un proyecto sellado: se borra la carpeta y se da de baja desde la Bandeja cuando salte.
+- 2026-10-02.
+
+## D61 — `Retry` comprueba la carpeta al momento; la verificación espera a la ventana
+- **Elección**: `Retry` hace un único `stat` de la carpeta ahora mismo, también en horario laboral (coste despreciable). Si está, el proyecto recupera su estado, la tarjeta desaparece y la verificación del historial se encola para fuera de horario. Si no está, sigue `missing` con aviso. Descartado: esperar a la siguiente ronda.
+- 2026-10-02.
+
+## D62 — Carpeta movida o renombrada con la misma cadena: mismo proyecto, se continúa el historial
+- **Contexto**: un proyecto puede cambiar de carpeta-año o de nombre; para la app es un `missing` más un proyecto nuevo con historial ajeno.
+- **Elección**: si aparece una carpeta nueva con `ascmhl/` cuya `ascmhl_chain.xml` es byte a byte la del espejo de un proyecto `missing`, es el mismo proyecto con ruta nueva: la fila se renombra, el espejo se mueve, sin tarjeta en la Bandeja; una línea en el log. Descartado: baja + proyecto nuevo (más clics).
+- 2026-10-02.
+
+## D63 — `Verify now` por proyecto, salta el horario laboral con aviso
+- **Contexto**: salió en la entrevista: poder verificar un proyecto a demanda (tras un `Retry`, ante una sospecha), sin esperar a la verificación escalonada de 90 días (D23).
+- **Opciones**: (1) por proyecto, se salta el horario con aviso de rendimiento; (2) por proyecto, solo adelanta en la cola nocturna; (3) además uno global «Verify all».
+- **Elección**: (1). Botón `Verify now` en la ficha de un proyecto `sealed`. En horario laboral avisa («Reads N GB from the NAS during working hours and can slow everyone down») y pide confirmar; fuera de horario se encola delante de todo. Trabajo `verify` manual con `bypass_hours`; cancelable como un Seal (D53, D57): al cancelar el proyecto vuelve a `sealed` sin generación. Sin «Verify all».
+- 2026-10-02.
+
 ---
 
 ## Pendiente de entrevista
-Nada. Las próximas preguntas salen de los hitos (bocetos de GUI del hito 3, resultado del spike del hito 0).
+Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

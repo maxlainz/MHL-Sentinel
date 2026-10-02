@@ -16,6 +16,7 @@ class ProjectState(StrEnum):
     CHANGED = "changed"  # only added files since last seal → append after settle (D9, D48)
     NEEDS_REVIEW = "needs_review"  # modified/deleted/legacy mismatch/corruption (D9, D17)
     IGNORED = "ignored"  # Ignore button (D19)
+    MISSING = "missing"  # folder gone from disk; Retire or Retry (D58, D60, D61)
     ERROR = "error"
 
 
@@ -25,6 +26,7 @@ class JobKind(StrEnum):
     ACCEPT_NEW_VERSION = "accept_new_version"
     VERIFY = "verify"  # hito 4
     ROOT_MANIFEST = "root_manifest"  # hito 4
+    RETIRE = "retire"  # never queued: the trace of a retired missing project (D60)
 
 
 class JobState(StrEnum):

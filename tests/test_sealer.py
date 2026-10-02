@@ -133,6 +133,7 @@ def make_archive(tmp_path: Path) -> tuple[Settings, Database]:
     for name in ("2025-01_CLIENTE-CAMPANA", "2025-02_CLIENTE-OTRA"):
         (root / "2025" / name / "01_MASTERS").mkdir(parents=True)
         (root / "2025" / name / "01_MASTERS" / "m.mov").write_bytes(name.encode() * 100)
+        set_mtime_before_now(root / "2025" / name / "01_MASTERS" / "m.mov")
     settings = Settings(archive_root=root, config_dir=tmp_path / "config", settle_hours=0)
     return settings, Database(settings.db_path).open()
 
@@ -141,6 +142,13 @@ def open_gate() -> threading.Event:
     gate = threading.Event()
     gate.set()
     return gate
+
+
+def set_mtime_before_now(path: Path) -> None:
+    """A file written by the test gets the real wall-clock mtime, which may be later than the
+    fixed ``NOW`` the scan cycles use: settle time (D31) would then never pass. Backdate it."""
+    stamp = (NOW - timedelta(hours=1)).timestamp()
+    os.utime(path, (stamp, stamp))
 
 
 def run_all_jobs(db: Database, settings: Settings) -> None:
@@ -173,7 +181,9 @@ def test_requests_and_missing_folder(tmp_path: Path) -> None:
     summary = sealer.run_scan_cycle(db, settings, now=NOW)
     assert summary.missing == [first.rel_path]
     gone = db.get_project(first.id)
-    assert gone is not None and gone.state is ProjectState.ERROR and gone.error == "folder missing"
+    assert gone is not None and gone.state is ProjectState.MISSING and gone.error is None  # D58
+    assert gone.missing_since == "2026-10-01T22:00:00.000000Z"
+    assert gone.state_before_missing is ProjectState.SEALED and gone.last_generation_no == 1
 
 
 def test_cancel_returns_the_project_to_its_previous_state(tmp_path: Path) -> None:
@@ -216,6 +226,7 @@ def test_new_project_after_first_discovery_seals_itself(tmp_path: Path) -> None:
     new = settings.archive_root / "2025" / "2025-03_CLIENTE-NUEVO"
     new.mkdir()
     (new / "a.mov").write_bytes(b"x" * 10)
+    set_mtime_before_now(new / "a.mov")
     sealer.run_scan_cycle(db, settings, now=NOW)  # first sight: not stable yet
     project = db.get_project("2025/2025-03_CLIENTE-NUEVO")
     assert project is not None and not project.preexisting
@@ -496,6 +507,7 @@ def test_startup_recovery_sets_orphans_aside_and_removes_temp_files(
     run_all_jobs(db, settings)
     folder = settings.archive_root / project.rel_path
     (folder / "01_MASTERS" / "b.mov").write_bytes(b"b" * 50)
+    set_mtime_before_now(folder / "01_MASTERS" / "b.mov")
 
     real_replace = os.replace
 
