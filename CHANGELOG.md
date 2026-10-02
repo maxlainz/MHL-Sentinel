@@ -3,6 +3,20 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- Proyectos desaparecidos (D58–D62): estado `missing` desde el primer scan en que la carpeta falta; tarjeta en «Needs your decision» con `Retire` (diálogo: `Retire`, `Retire and download MHL`, `Cancel`; borra la fila, la caché de hashes y el espejo del historial, deja una línea en el log) y `Retry` (comprueba la carpeta al momento y, si está, recupera el estado y encola una verificación). Cortafuegos: una raíz que lista cero proyectos cuenta como archivo inaccesible. Una carpeta movida o renombrada con la misma cadena `ascmhl` se reconoce como el mismo proyecto.
+- Espejo del historial `ascmhl/` de cada proyecto en `<config>/history/` tras cada generación y en el scan si difiere (D59); `GET /projects/{id}/history.zip`.
+- `Verify now` en la ficha de un proyecto sellado (D63): verificación manual que salta el horario laboral tras un aviso de rendimiento; cancelable.
+
+### Cambiado
+- La carpeta ausente ya no es `error "folder missing"` reintentado sin fin; esquema de la DB a `user_version` 2 (`missing_since`, `state_before_missing`, `jobs.bypass_hours`), migración automática al arrancar.
+
+### Corregido
+- Tres tests dependían de la fecha real y fallaban al día siguiente de escribirse; ahora son deterministas.
+- Revisión adversarial antes del PR: una carpeta que discovery no lista pero sigue en disco (listado fallido en SMB) ya no pasa a `missing` (se confirma con `lstat`); `Retire` espera a que pare un trabajo aún en marcha del proyecto; el trabajo en curso cuyo proyecto desaparece o se mueve se para; un trabajo pausado por el horario cede el hilo a un `Verify now`; el espejo nunca mezcla dos historiales (se aparta el antiguo) y un cerrojo serializa sus escrituras; el log muestra «Verified» y no «Verify now» al terminar; `Retire` funciona sin JS; avisos de `Retry`/`Verify now` coherentes con lo que pasa.
+
+### Decidido
+- D58–D63: ver `docs/decisiones.md` (entrevista del 2026-10-02).
 
 ## [0.5.1] - 2026-10-01 — Cancel en marcha
 ### Añadido

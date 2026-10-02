@@ -10,6 +10,14 @@ This is the only module that changes ``projects.state``. Three layers:
 - :func:`schedule_maintenance`: staggered periodic verification (D23) and the root manifest job,
   called after a scan cycle.
 
+Vanished folders (D58 to D62): a tracked folder that a scan does not find becomes ``missing`` (the
+row, caches and history mirror are kept, D59); it goes back to its previous state when a scan
+finds it again or when Retry finds it (D61), with an automatic verification if the app wrote
+its history; a new folder whose ``ascmhl_chain.xml`` is byte-identical to the mirrored chain of
+a vanished project is that project moved or renamed (D62); Retire (D60) forgets it. A root
+that lists no project at all while the database has some is an unreachable archive, not an
+archive where everything vanished: the cycle raises before touching any state.
+
 Orphan manifests (issue #1): a ``NNNN_*.mhl`` in ``ascmhl/`` that the chain does not list is
 the trace of a crash between the two renames of ``mhlwriter._commit``. ``ascmhl`` would load it
 as a generation (and number the next one after it), so it is renamed to ``<name>.orphan`` before
@@ -21,6 +29,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import stat
 import threading
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -30,7 +39,7 @@ from pathlib import Path
 from ascmhl import chain_xml_parser
 from ascmhl.history import MHLHistory
 
-from mhl_sentinel import __version__, legacy_mhl, rootmanifest
+from mhl_sentinel import __version__, history_mirror, legacy_mhl, rootmanifest
 from mhl_sentinel.clock import from_iso, to_iso, utcnow
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ProjectRow, ReviewItem, SealedFile, VerifyResult
@@ -50,6 +59,7 @@ from mhl_sentinel.models import (
     FileStat,
     JobKind,
     JobState,
+    ProjectCandidate,
     ProjectState,
     ScanDiff,
     Trigger,
@@ -97,7 +107,9 @@ class ArchiveUnavailableError(RuntimeError):
 class ScanSummary:
     discovered: int = 0
     new_projects: list[str] = field(default_factory=list)
-    missing: list[str] = field(default_factory=list)  # folders gone from disk → error
+    missing: list[str] = field(default_factory=list)  # folders gone from disk → missing (D58)
+    reappeared: list[str] = field(default_factory=list)  # missing folders found again (D58)
+    moved: list[tuple[str, str]] = field(default_factory=list)  # (old, new) rel_paths (D62)
     scanned: int = 0
     states: dict[str, ProjectState] = field(default_factory=dict)
     enqueued: list[tuple[str, JobKind]] = field(default_factory=list)
@@ -264,39 +276,57 @@ def run_scan_cycle(
     first_discovery_marker: str = FIRST_DISCOVERY_KEY,
     stop: threading.Event | None = None,
 ) -> ScanSummary:
-    """Discovery → per-project scan → classify → persist → auto-enqueue. Reads no media file.
+    """Discovery → moved folders (D62) → missing / reappeared folders (D58) → per-project scan
+    → classify → persist → auto-enqueue. Reads no media file.
 
     ``stop`` (set by SIGTERM) ends the cycle between two projects, so a shutdown does not wait
     for a whole archive walk; every project already scanned is committed."""
     root = settings.archive_root
     if not root.is_dir():
         raise ArchiveUnavailableError(f"archive root {root} is not a directory")
+    candidates = discover_projects(root, settings.project_depth, settings.ignore_prefixes)
+    if not candidates and any(p.state is not ProjectState.IGNORED for p in db.list_projects()):
+        # D58 firewall: an empty listing of a share that held projects is an unmounted or
+        # unreadable share, never "every project vanished".
+        raise ArchiveUnavailableError("archive root lists no projects")
     summary = ScanSummary()
     first = db.get_kv(first_discovery_marker) is None
-    candidates = discover_projects(root, settings.project_depth, settings.ignore_prefixes)
     summary.discovered = len(candidates)
     on_disk = {c.rel_path for c in candidates}
+    gone: list[ProjectRow] = []
+    for p in db.list_projects():
+        if p.rel_path in on_disk or p.state is ProjectState.IGNORED:
+            continue
+        if p.state is ProjectState.MISSING or _folder_gone(root / p.rel_path):
+            gone.append(p)
+        else:  # discovery did not list it, yet it is there (or unreadable): not "vanished"
+            msg = "not listed by discovery but not confirmed gone; left as it is"
+            log.warning("%s: %s", p.rel_path, msg)
+            summary.errors.append(f"{p.rel_path}: {msg}")
     for cand in candidates:
         if db.get_project(cand.rel_path) is None:
+            moved = _match_moved(db, settings, cand, gone, now) if cand.has_history else None
+            if moved is not None:
+                gone = [p for p in gone if p.id != moved.id]
+                summary.moved.append((moved.rel_path, cand.rel_path))
+                continue
             summary.new_projects.append(cand.rel_path)
         db.upsert_project(cand.rel_path, cand.name, preexisting=first, now=now)
     if first:
         db.set_kv(first_discovery_marker, to_iso(now))
 
-    for project in db.list_projects():
+    for project in gone:
+        if project.state is not ProjectState.MISSING:
+            _mark_missing(db, project, now)
+        summary.missing.append(project.rel_path)
+        summary.states[project.rel_path] = ProjectState.MISSING
+
+    for project in db.list_projects(ProjectState.MISSING):
         if project.rel_path in on_disk:
-            continue
-        if project.state is not ProjectState.IGNORED and project.error != "folder missing":
-            db.set_state(
-                project.id,
-                ProjectState.ERROR,
-                error="folder missing",
-                review_reason=project.review_reason,
-            )
-            log.warning("project folder missing: %s", project.rel_path)
-        if project.state is not ProjectState.IGNORED:
-            summary.missing.append(project.rel_path)
-            summary.states[project.rel_path] = ProjectState.ERROR
+            log.warning("project back on disk: %s", project.rel_path)
+            if _restore_from_missing(db, project, now):
+                summary.enqueued.append((project.rel_path, JobKind.VERIFY))
+            summary.reappeared.append(project.rel_path)
 
     for project in db.list_projects():
         if stop is not None and stop.is_set():
@@ -307,6 +337,122 @@ def run_scan_cycle(
             continue
         _scan_one(db, settings, project, now, summary)
     return summary
+
+
+def _folder_gone(path: Path) -> bool:
+    """D58: discovery swallows listing errors (an intermediate folder that fails to list on a
+    flaky share yields no projects), so absence is confirmed by one ``lstat`` of the folder
+    itself: only "no such file" (or something that is not a folder) counts as vanished; any
+    other error, or a folder that is there, is not a decision to take this round."""
+    try:
+        st = path.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return not stat.S_ISDIR(st.st_mode)
+
+
+# States that only make sense while the folder is there: a project that vanishes in them goes
+# back to plain unsealed/sealed (the next scan classifies it again anyway).
+_TRANSIENT = frozenset({ProjectState.QUEUED, ProjectState.HASHING, ProjectState.ERROR})
+
+
+def _resting_state(project: ProjectRow) -> ProjectState:
+    return ProjectState.SEALED if _is_sealed(project) else ProjectState.UNSEALED
+
+
+def _mark_missing(db: Database, project: ProjectRow, now: datetime) -> None:
+    """D58: ``missing`` from the first scan that misses the folder. The row keeps everything
+    (review reason, sealed files, generation number); queued jobs are cancelled."""
+    before = project.state
+    if before in _TRANSIENT or before is ProjectState.MISSING:
+        before = _resting_state(project)
+    with db.transaction():
+        db.cancel_queued_jobs(project.id, now)
+        db.update_project_fields(
+            project.id,
+            state=ProjectState.MISSING,
+            error=None,
+            missing_since=now,
+            state_before_missing=before,
+        )
+    log.warning("project folder missing: %s", project.rel_path)
+
+
+def _state_to_restore(project: ProjectRow) -> ProjectState:
+    before = project.state_before_missing
+    if before is None or before in _TRANSIENT or before is ProjectState.MISSING:
+        return _resting_state(project)
+    return before
+
+
+def _restore_from_missing(db: Database, project: ProjectRow, now: datetime) -> bool:
+    """D58/D61: back to the state it had, and an automatic verification (normal priority) if
+    the app wrote its history: the files were out of sight. Not for a project waiting in review:
+    a verification there would be skipped (only Accept or Postpone apply). The scan that follows
+    classifies the project as usual. Returns True if a verification was queued."""
+    state = _state_to_restore(project)
+    verify = _is_sealed(project) and state in (ProjectState.SEALED, ProjectState.CHANGED)
+    with db.transaction():
+        db.update_project_fields(
+            project.id, state=state, missing_since=None, state_before_missing=None
+        )
+        if verify:
+            enqueue(db, project.id, JobKind.VERIFY, Trigger.AUTO, now)
+    return verify
+
+
+def _match_moved(
+    db: Database,
+    settings: Settings,
+    cand: ProjectCandidate,
+    gone: list[ProjectRow],
+    now: datetime,
+) -> ProjectRow | None:
+    """D62: a new folder whose ``ascmhl_chain.xml`` has the same bytes as the mirrored chain
+    of a vanished project (already ``missing`` or missed by this very cycle) is that project,
+    moved or renamed. The row follows the folder (no new project, nothing queued: the scan that
+    follows classifies it). If several match, the most recently missed wins. Returns the
+    matched row (as it was before the move), or ``None``."""
+    chain = history_mirror.chain_bytes(settings.archive_root / cand.rel_path / HISTORY_DIR)
+    if chain is None:
+        return None
+    matches = [
+        p
+        for p in gone
+        if history_mirror.chain_bytes(history_mirror.mirror_dir(settings, p.rel_path)) == chain
+    ]
+    if not matches:
+        return None
+    stamp = to_iso(now)
+    matches.sort(key=lambda p: p.missing_since or stamp, reverse=True)
+    if len(matches) > 1:
+        log.warning(
+            "%s matches the history of %d vanished projects (%s); taking %s",
+            cand.rel_path,
+            len(matches),
+            ", ".join(p.rel_path for p in matches),
+            matches[0].rel_path,
+        )
+    project = matches[0]
+    restore = (
+        _state_to_restore(project)
+        if project.state is ProjectState.MISSING
+        else (project.state if project.state not in _TRANSIENT else _resting_state(project))
+    )
+    with db.transaction():
+        db.cancel_queued_jobs(project.id, now)
+        db.rename_project(project.id, cand.rel_path, cand.name)
+        db.update_project_fields(
+            project.id, state=restore, error=None, missing_since=None, state_before_missing=None
+        )
+    try:
+        history_mirror.move_mirror(settings, project.rel_path, cand.rel_path)
+    except OSError as exc:  # the next scan mirrors the history again at the new path
+        log.warning("history mirror of %s not moved: %s", project.rel_path, exc)
+    log.warning("project moved: %s → %s", project.rel_path, cand.rel_path)
+    return project
 
 
 def _scan_one(
@@ -326,6 +472,8 @@ def _scan_one(
         summary.errors.append(f"{project.rel_path}: {msg}")
         summary.states[project.rel_path] = ProjectState.ERROR
         return
+    if project.state is not ProjectState.HASHING:  # a job may be writing the history right now
+        _mirror_if_needed(settings, project, proj_root, summary)
     if outcome.errors:
         # An unreadable entry would look deleted: do not classify on an incomplete snapshot.
         msg = "scan errors: " + _list_paths(outcome.errors)
@@ -380,6 +528,21 @@ def _scan_one(
         db.set_state(project.id, ProjectState.QUEUED)
         summary.enqueued.append((project.rel_path, kind))
         summary.states[project.rel_path] = ProjectState.QUEUED
+
+
+def _mirror_if_needed(
+    settings: Settings, project: ProjectRow, proj_root: Path, summary: ScanSummary
+) -> None:
+    """D59: mirror a history whose chain the mirror does not have yet (e.g. written by another
+    tool, or before the mirror existed). A failure is reported, never fatal to the scan."""
+    mirror = history_mirror.mirror_dir(settings, project.rel_path)
+    try:
+        if history_mirror.needs_sync(proj_root, mirror):
+            history_mirror.sync_mirror(proj_root, mirror)
+    except OSError as exc:
+        msg = f"history mirror not updated: {exc}"
+        log.warning("%s: %s", project.rel_path, msg)
+        summary.errors.append(f"{project.rel_path}: {msg}")
 
 
 # --- maintenance: periodic verification (D23) and the root manifest (D29) ----------------------
@@ -476,23 +639,26 @@ def request_seal(db: Database, project_id: int, now: datetime) -> int:
     return job_id
 
 
-_CANCELLABLE = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION})
+_CANCELLABLE = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION, JobKind.VERIFY})
 _STATE_AFTER_CANCEL = {
     JobKind.SEAL: ProjectState.UNSEALED,
     JobKind.ACCEPT_NEW_VERSION: ProjectState.NEEDS_REVIEW,
+    JobKind.VERIFY: ProjectState.SEALED,  # D63: a cancelled Verify now writes no generation
 }
 
 
 def is_cancellable(job: JobRow) -> bool:
-    """Only the owner's own requests: automatic jobs would be enqueued again next round, and a
-    verification or an append is the app's own maintenance (D53, D57)."""
+    """Only the owner's own requests (Seal, Accept, Verify now): automatic jobs would be
+    enqueued again next round, and an append or a scheduled verification is the app's own
+    maintenance (D53, D57, D63)."""
     return job.trigger is Trigger.MANUAL and job.kind in _CANCELLABLE
 
 
 def cancellable_job(db: Database, project: ProjectRow) -> JobRow | None:
-    """The manual job a Cancel button can withdraw: a ``queued`` project whose ``seal`` or
-    ``accept_new_version`` waits for the idle window (D53), or a ``hashing`` project whose manual
-    job is running, also while paused by the working hours (D57; the supervisor aborts it)."""
+    """The manual job a Cancel button can withdraw: a ``queued`` project whose ``seal``,
+    ``accept_new_version`` or ``verify`` (Verify now, D63) waits (D53), or a ``hashing`` project
+    whose manual job is running, also while paused by the working hours (D57; the supervisor
+    aborts it)."""
     if project.state is ProjectState.QUEUED:
         job = db.queued_job(project.id)
     elif project.state is ProjectState.HASHING:
@@ -564,6 +730,71 @@ def request_postpone(db: Database, project_id: int, now: datetime) -> None:
     log.info("review postponed for %s", project.rel_path)
 
 
+def request_verify_now(db: Database, project_id: int, now: datetime) -> int:
+    """Verify now (D63): a manual ``verify`` (priority manual +100) that also runs inside working
+    hours (``bypass_hours``: the supervisor runs it with the gate closed and never pauses it).
+    Only for ``sealed`` projects; the project shows ``queued`` until it starts, and Cancel
+    withdraws it (back to ``sealed``). Returns the job id; a verification the scheduler had
+    already queued is promoted instead of duplicated."""
+    project = _require(db, project_id)
+    if project.state is not ProjectState.SEALED or not _is_sealed(project):
+        raise SealerError(f"{project.rel_path}: Verify now needs state sealed, not {project.state}")
+    priority = PRIORITY[JobKind.VERIFY] + MANUAL_BONUS
+    with db.transaction():
+        job_id = db.enqueue_job(
+            JobKind.VERIFY, project_id, Trigger.MANUAL, priority, now, bypass_hours=True
+        )
+        db.set_state(project_id, ProjectState.QUEUED, review_reason=project.review_reason)
+    log.info("verify now requested for %s (job %d)", project.rel_path, job_id)
+    return job_id
+
+
+def request_retry(db: Database, settings: Settings, project_id: int, now: datetime) -> bool:
+    """Retry on a ``missing`` project (D61): one ``is_dir()`` on its folder now (also in working
+    hours: a stat costs nothing). Found → the reappearance of D58 (previous state, automatic
+    verification at the next idle window if the app wrote its history) and True. Not found →
+    False and nothing changes."""
+    project = _require(db, project_id)
+    if project.state is not ProjectState.MISSING:
+        raise SealerError(f"{project.rel_path}: only a missing project can be retried")
+    try:
+        found = (settings.archive_root / project.rel_path).is_dir()
+    except OSError:
+        found = False
+    if not found:
+        log.info("retry: %s is still missing", project.rel_path)
+        return False
+    log.warning("project back on disk: %s", project.rel_path)
+    _restore_from_missing(db, project, now)
+    return True
+
+
+RETIRE_LOG_TEMPLATE = "retired {rel_path} (history mirror deleted)"
+
+
+def request_retire(db: Database, settings: Settings, project_id: int, now: datetime) -> str:
+    """Retire a ``missing`` project (D60): delete its history mirror, then its row (cascade:
+    files, sealed files, cached hashes, scans, review items, verify results, jobs). The only
+    trace kept is a ``retire`` job (no project, ``done``, manual) with one log line; the root
+    manifest is marked stale so the next one drops the reference. Returns the project's name."""
+    project = _require(db, project_id)
+    if project.state is not ProjectState.MISSING:
+        raise SealerError("only a missing project can be retired")
+    if db.running_job(project.id) is not None:  # the hasher still holds it; it stops shortly
+        raise SealerError(f"{project.rel_path}: a job is still stopping; retire it in a moment")
+    try:
+        history_mirror.remove_mirror(settings, project.rel_path)
+    except OSError as exc:
+        raise SealerError(f"{project.rel_path}: history mirror not deleted: {exc}") from exc
+    with db.transaction():
+        job_id = db.record_finished_job(JobKind.RETIRE, None, Trigger.MANUAL, JobState.DONE, now)
+        db.log(job_id, "info", RETIRE_LOG_TEMPLATE.format(rel_path=project.rel_path), now)
+        db.delete_project(project.id)
+        db.set_kv(ROOT_MANIFEST_STALE_KEY, "1")
+    log.warning("project retired: %s (job %d)", project.rel_path, job_id)
+    return project.name
+
+
 def recover_after_restart(db: Database) -> int:
     """Jobs left ``running`` go back to ``queued``, and so do their ``hashing`` projects."""
     count = db.requeue_running_jobs()
@@ -609,7 +840,7 @@ def recover_history_dirs(db: Database, settings: Settings) -> FsRecovery:
     folders += [
         (p.rel_path, root / p.rel_path)
         for p in db.list_projects()
-        if p.state is not ProjectState.IGNORED
+        if p.state not in (ProjectState.IGNORED, ProjectState.MISSING)
     ]
     for rel, folder in folders:
         prefix = "" if rel == "." else f"{rel}/"
@@ -682,17 +913,18 @@ def run_job(
     job: JobRow,
     *,
     gate: Gate,
-    stop: threading.Event,
+    stop: StopFlag,
     now_fn: Callable[[], datetime] = utcnow,
     on_progress: ProgressFn | None = None,
     cancel: StopFlag | None = None,
 ) -> None:
     """Run one queued job to completion, review, requeue (``Stopped``) or failure.
 
-    ``cancel`` (the Cancel button, D57) aborts a manual ``seal``/``accept_new_version`` at the
-    next file like ``stop`` does, but the job ends ``cancelled`` and the project goes back to the
-    state it had before the request; it is ignored for any other job. If both are set, cancel
-    wins. Either way nothing is written: the generation is only written after the last file.
+    ``cancel`` (the Cancel button, D57) aborts a manual ``seal``/``accept_new_version`` or a
+    Verify now (D63) at the next file like ``stop`` does, but the job ends ``cancelled`` and the
+    project goes back to the state it had before the request; it is ignored for any other job.
+    If both are set, cancel wins. Either way nothing is written: the generation is only written
+    after the last file.
 
     ``on_progress(files_done, files_total, bytes_done, bytes_total)`` is called after each
     progress write to the DB (the supervisor turns it into ``job.progress`` events).
@@ -706,6 +938,10 @@ def run_job(
     project = db.get_project(job.project_id)
     if project is None:
         db.set_job_state(job.id, JobState.FAILED, now_fn(), error="project not found")
+        return
+    if project.state is ProjectState.MISSING:  # D58: its queued jobs were cancelled; a stray one
+        db.log(job.id, "info", "skipped: project folder is missing", now_fn())
+        db.set_job_state(job.id, JobState.CANCELLED, now_fn())
         return
     verify = job.kind is JobKind.VERIFY
     if verify and not (
@@ -744,6 +980,10 @@ def run_job(
         else:
             _run_seal(ctx, accept=job.kind is JobKind.ACCEPT_NEW_VERSION)
     except Stopped:
+        if _went_missing(db, project.id):  # D58: the scan cycle took the project meanwhile
+            ctx.finish(JobState.CANCELLED)
+            ctx.log("info", "stopped; the project folder is missing")
+            return
         if cancel is not None and cancel.is_set():  # D57: the owner took the request back
             ctx.finish(JobState.CANCELLED)
             db.set_state(
@@ -752,22 +992,32 @@ def run_job(
             ctx.log("info", "cancelled while reading; hashes already done are kept")
             return
         db.set_job_state(job.id, JobState.QUEUED, now_fn())
-        if verify:  # nothing was decided: the project is still sealed
+        if verify and job.trigger is not Trigger.MANUAL:  # nothing decided: still sealed
             db.set_state(project.id, ProjectState.SEALED)
             ctx.log("info", "stopped; back in the queue (a verification re-reads everything)")
-        else:
+        else:  # a Verify now (D63) waits as queued, so Cancel still finds it
             db.set_state(project.id, ProjectState.QUEUED, review_reason=project.review_reason)
             ctx.log("info", "stopped; back in the queue (hashes already done are kept)")
     except FileChanged as exc:
-        msg = f"file kept changing while being read: {exc}"
-        ctx.finish(JobState.FAILED, msg)
-        db.set_state(project.id, ProjectState.ERROR, error=msg, review_reason=project.review_reason)
-        ctx.log("error", msg)
+        _fail(ctx, f"file kept changing while being read: {exc}")
     except Exception as exc:
-        msg = f"{type(exc).__name__}: {exc}"
-        ctx.finish(JobState.FAILED, msg)
-        db.set_state(project.id, ProjectState.ERROR, error=msg, review_reason=project.review_reason)
-        ctx.log("error", msg)
+        _fail(ctx, f"{type(exc).__name__}: {exc}")
+
+
+def _went_missing(db: Database, project_id: int) -> bool:
+    current = db.get_project(project_id)
+    return current is not None and current.state is ProjectState.MISSING
+
+
+def _fail(ctx: _Ctx, msg: str) -> None:
+    """The job failed. The project goes to ``error`` unless the scan cycle already found its
+    folder gone (D58): ``missing`` says more than the read error it caused."""
+    ctx.finish(JobState.FAILED, msg)
+    if not _went_missing(ctx.db, ctx.project.id):
+        ctx.db.set_state(
+            ctx.project.id, ProjectState.ERROR, error=msg, review_reason=ctx.project.review_reason
+        )
+    ctx.log("error", msg)
 
 
 def _scan_for_job(ctx: _Ctx, patterns: list[str]) -> list[FileStat]:
@@ -901,6 +1151,18 @@ def _after_generation(
     db.set_kv(ROOT_MANIFEST_STALE_KEY, "1")
     ctx.finish(JobState.DONE)
     ctx.log("info", f"wrote {manifest.name}")
+    _mirror_after_write(ctx)
+
+
+def _mirror_after_write(ctx: _Ctx) -> None:
+    """D59: copy the new generation into the history mirror. The generation is already on the
+    archive, so a failure here is only a warning; the next scan retries (the chains differ)."""
+    try:
+        history_mirror.sync_mirror(
+            ctx.root, history_mirror.mirror_dir(ctx.settings, ctx.project.rel_path)
+        )
+    except OSError as exc:
+        ctx.log("warning", f"history mirror not updated: {exc}")
 
 
 def _run_seal(ctx: _Ctx, *, accept: bool) -> None:
@@ -924,6 +1186,10 @@ def _run_seal(ctx: _Ctx, *, accept: bool) -> None:
         retired = retire_history(ctx.root, ctx.now_fn())
         if retired is not None:
             ctx.log("info", f"previous history moved to {retired.relative_to(ctx.root).as_posix()}")
+            try:  # D59: the mirror keeps the same layout as the project folder
+                history_mirror.supersede_mirror(ctx.settings, ctx.project.rel_path, retired.name)
+            except OSError as exc:
+                ctx.log("warning", f"history mirror not set aside: {exc}")
     elif (ctx.root / HISTORY_DIR).is_dir() and not has_history(ctx.root):
         # Only orphans left (crash during the very first generation): set them aside.
         retired = retire_history(ctx.root, ctx.now_fn())

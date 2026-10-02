@@ -1,3 +1,4 @@
+{% import "_dialogs.html" as dlg %}
 {% macro seal_form(r) -%}
 <form class="inline" method="post" action="/projects/{{ r.view.id }}/seal?from=inbox"
       hx-post="/projects/{{ r.view.id }}/seal?from=inbox" hx-target="#projects" hx-swap="outerHTML">
@@ -20,12 +21,18 @@
 
   {% if inbox.decide %}
   <section class="section">
-    <h2 class="label">Needs your decision <span class="count">{{ counters.needs_review + counters.errors }}</span></h2>
+    <h2 class="label">Needs your decision <span class="count">{{ counters.needs_review + counters.errors + counters.missing }}</span></h2>
     <ul class="items">
       {% for r in inbox.decide %}
       {% call item(r, "decide") %}
         {% if r.view.state == "needs_review" %}
         <a class="btn small decide" href="/projects/{{ r.view.id }}">Review changes</a>
+        {% elif r.view.state == "missing" %}
+        {{ dlg.retire(r.view.id, r.view.name, "#projects", "?from=inbox") }}
+        <form class="inline" method="post" action="/projects/{{ r.view.id }}/retry?from=inbox"
+              hx-post="/projects/{{ r.view.id }}/retry?from=inbox" hx-target="#projects" hx-swap="outerHTML">
+          <button type="submit" class="btn small decide">Retry</button>
+        </form>
         {% else %}
         <a class="btn small quiet" href="/projects/{{ r.view.id }}">Details</a>
         {% endif %}

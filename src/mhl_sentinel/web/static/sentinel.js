@@ -11,6 +11,48 @@
     }
   });
 
+  // Confirmation dialogs (Retire, Verify now): native <dialog>; delegated, so they keep working
+  // after a live refresh replaces the fragment.
+  document.addEventListener("click", function (e) {
+    var t = e.target instanceof Element ? e.target : null;
+    if (!t) return;
+    var open = t.closest("[data-dialog-open]");
+    if (open) {
+      var d = document.getElementById(open.dataset.dialogOpen);
+      if (d && typeof d.showModal === "function") d.showModal();
+      return;
+    }
+    var close = t.closest("[data-dialog-close]");
+    if (close) {
+      var parent = close.closest("dialog");
+      if (parent) parent.close();
+      return;
+    }
+    var dl = t.closest("[data-download-url]");
+    if (dl) {
+      // "Retire and download MHL": fetch the zip first (Retire deletes the saved history), save
+      // it, and only then submit the form. If the download fails the project is not retired.
+      var form = dl.closest("form");
+      dl.disabled = true;
+      fetch(dl.dataset.downloadUrl).then(function (r) {
+        if (!r.ok) throw new Error("download failed");
+        return r.blob();
+      }).then(function (blob) {
+        var a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = dl.dataset.downloadName || "ascmhl.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+        if (form && form.requestSubmit) form.requestSubmit();
+      }).catch(function () {
+        dl.disabled = false;
+        window.alert("The MHL history could not be downloaded, so the project was not retired.");
+      });
+    }
+  });
+
   // Type-to-filter on the folded "all projects" list.
   function wireFilters(root) {
     root.querySelectorAll("[data-filter]").forEach(function (input) {

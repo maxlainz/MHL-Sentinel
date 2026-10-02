@@ -12,7 +12,7 @@ CLAUDE.md              este router
 docs/decisiones.md     ADRs D1–Dn                      docs/bitacora/    una entrada por sesión (NN-slug.md); 02 cubre el MVP
 docs/roadmap.md        hitos → tags v0.N.0              docs/contexto-archivo.md  el archivo real, anonimizado
 docs/research/         informes de subagentes (inglés, TL;DR en español): spec ASC MHL · arquitectura del watcher
-src/mhl_sentinel/      código (mhlwriter desde hito 0)  tests/            pytest; fixtures sintéticos en tests/fixtures/archive (make fixtures, gitignored)
+src/mhl_sentinel/      código (mhlwriter desde hito 0; history_mirror = espejo de ascmhl/ en /config, D59)  tests/  pytest; fixtures sintéticos en tests/fixtures/archive (make fixtures, gitignored)
 .github/workflows/     ci.yml (push/PR); release.yml en hito 2    pyproject.toml · uv.lock · .python-version
 deploy/                Dockerfile, compose, plantillas NAS (hito 2)
 scripts/leak-check.sh  nada del estudio en el repo      samples/          material local, gitignored
@@ -49,7 +49,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 ## Docs
 | Archivo | Leer cuando… |
 |---|---|
-| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D41; entrevistas de producto y técnica cerradas) |
+| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D63; entrevistas de producto y técnica cerradas) |
 | `docs/contexto-archivo.md` | Vas a tocar detección de proyectos, exclusiones, política ante cambios, o necesitas saber qué exige el estudio |
 | `docs/research/asc-mhl-spec-y-referencia.md` | Vas a escribir o leer manifiestos, usar `mhllib`, elegir hash, o dudas de qué hace `ascmhl` ante un cambio |
 | `docs/research/arquitectura-watcher.md` | Vas a tocar scan, scheduler, hasher, GUI, Docker o la DB |
@@ -80,8 +80,9 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-01, bitácora 03, `v0.5.1`)**: **MVP completo (D44)** más la GUI «Bandeja» (D54, #5): portada con frase de estado honesta, solo lo que pide decisión, `Seal`/`Cancel` de un clic, log de actividad, tema auto/claro/oscuro en Ajustes (D56); hoja y JS propios sin Pico. `main` protegida: todo por PR (D55). Base: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 182 tests, todos los manifiestos validados por la referencia. D1–D57, H1–H19. `v0.5.1`: `Cancel` también aborta un Seal/Accept manual en marcha (D57, #10). Patch `v0.4.3`: botón `Cancel` para un Seal/Accept en cola (D53, #4). Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). **Instalado en el NAS del estudio** (2026-10-01): 95 proyectos, 32 050 ficheros, 11,8 TB detectados en ~34 s (H19); nada sellado aún. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
-- **Después**: primer `Seal` de un proyecto pequeño en el NAS y medir MB/s del hasher (predicción en bitácora 02); luego el backlog de 95 proyectos a ritmo de ventanas; MediaVerify sobre la raíz (#3). Luego: plantilla Container Station probada, Apprise (D22), issue #2.
+- **Estado (2026-10-02, bitácora 04, rama `claude/sweet-franklin-e9ot1a` sin integrar)**: proyectos desaparecidos (D58–D63): estado `missing` al primer scan, `Retire`/`Retry` en la Bandeja, espejo del historial en `/config/history/`, carpetas movidas reconocidas por la cadena, `Verify now` por proyecto saltando el horario con aviso. DB `user_version` 2. Pendiente: PR, CI verde, `v0.6.0`.
+- **Estado anterior (2026-10-01, bitácora 03, `v0.5.1`)**: **MVP completo (D44)** más la GUI «Bandeja» (D54, #5): portada con frase de estado honesta, solo lo que pide decisión, `Seal`/`Cancel` de un clic, log de actividad, tema auto/claro/oscuro en Ajustes (D56); hoja y JS propios sin Pico. `main` protegida: todo por PR (D55). Base: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 182 tests, todos los manifiestos validados por la referencia. D1–D57, H1–H19. `v0.5.1`: `Cancel` también aborta un Seal/Accept manual en marcha (D57, #10). Patch `v0.4.3`: botón `Cancel` para un Seal/Accept en cola (D53, #4). Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). **Instalado en el NAS del estudio** (2026-10-01): 95 proyectos, 32 050 ficheros, 11,8 TB detectados en ~34 s (H19); nada sellado aún. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
+- **Después**: integrar la rama y cortar `v0.6.0`; primer `Seal` de un proyecto pequeño en el NAS y medir MB/s del hasher (predicción en bitácora 02); luego el backlog de 95 proyectos a ritmo de ventanas; MediaVerify sobre la raíz (#3). Luego: plantilla Container Station probada, Apprise (D22), issue #2.
 
 ## Pendiente del owner (2026-10-01)
 - Fuera del repo: actualizar el protocolo del estudio (`ascmhl/` en vez de `00_MANIFEST.mhl`; xxh128; `ascmhl-debug verify`; verificación trimestral por la app; `Seal` al terminar de archivar).

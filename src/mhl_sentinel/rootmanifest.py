@@ -15,7 +15,8 @@ When to refresh (:func:`root_manifest_needed`):
   remaining references in the reference implementation, so the root is regenerated without it.
 
 Which projects (:func:`referenced_projects`): every project with a history written by the app
-(``last_generation_no``) that is not ignored and whose ``ascmhl/`` chain is on disk. Projects in
+(``last_generation_no``) that is neither ignored nor missing (D58) and whose ``ascmhl/`` chain is
+on disk. Projects in
 review or with new files keep their reference: their history is intact, only the files moved on.
 
 Rebuild: ``ascmhl`` 1.2 resolves the references of *every* generation of a history when it loads
@@ -82,7 +83,7 @@ def referenced_projects(db: Database, settings: Settings) -> list[ProjectRow]:
         p
         for p in db.list_projects()
         if p.last_generation_no is not None
-        and p.state is not ProjectState.IGNORED
+        and p.state not in (ProjectState.IGNORED, ProjectState.MISSING)  # D58
         and _has_history(root / p.rel_path)
     ]
 

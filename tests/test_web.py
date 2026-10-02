@@ -22,7 +22,7 @@ from mhl_sentinel import sealer
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ReviewItem, SealedFile, VerifyResult
 from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
-from mhl_sentinel.web import create_app, views
+from mhl_sentinel.web import create_app, routes, views
 from mhl_sentinel.web.routes import event_stream
 
 NOW = datetime(2026, 10, 1, 22, 0, tzinfo=UTC)
@@ -169,7 +169,11 @@ def env(tmp_path: Path) -> Iterator[Env]:
 HX = {"HX-Request": "true"}
 
 
-def test_main_page_lists_projects_with_badges_and_counters(env: Env) -> None:
+def test_main_page_lists_projects_with_badges_and_counters(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "Today" is fixed: fmt_when shows a bare HH:MM only for the current local day.
+    monkeypatch.setattr(routes, "utcnow", lambda: datetime(2026, 10, 1, 21, 30, tzinfo=UTC))
     r = env.client.get("/")
     assert r.status_code == 200
     html = r.text
@@ -687,3 +691,176 @@ def test_detail_sentence_per_state(env: Env) -> None:
 def test_project_card_refreshes_on_job_events(env: Env) -> None:
     card = env.client.get(f"/fragments/projects/{env.ids['unsealed']}").text
     assert "sse:job.started" in card and "sse:job.finished" in card
+
+
+# --- missing projects, Retire / Retry, MHL download, Verify now (D58-D63) ---------------------
+
+
+def _make_missing(env: Env, name: str = "2025-05_CLIENTE-BORRADO") -> int:
+    pid = env.db.upsert_project(f"2025/{name}", name, preexisting=True, now=NOW)
+    env.db.update_project_fields(
+        pid, last_generation_no=1, last_sealed_at=NOW, last_verified_at=NOW,
+        file_count=10, total_bytes=2 * GB, missing_since=NOW,
+        state_before_missing=ProjectState.SEALED,
+    )  # fmt: skip
+    env.db.set_state(pid, ProjectState.MISSING)
+    return pid
+
+
+def _mirror(env: Env, rel: str) -> Path:
+    folder = env.ref.get().config_dir / "history" / rel / "ascmhl"
+    folder.mkdir(parents=True)
+    (folder / "ascmhl_chain.xml").write_text("<chain/>")
+    (folder / "0001_x_2026-10-01_220000Z.mhl").write_text("<hashlist/>")
+    return folder
+
+
+def test_inbox_shows_a_missing_project_as_a_decision(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(views, "utcnow", lambda: datetime(2026, 10, 1, 23, 0, tzinfo=UTC))
+    pid = _make_missing(env)
+    html = env.client.get("/").text
+    flat = re.sub(r"\s+", " ", html)
+    assert 'Needs your decision <span class="count">2</span>' in flat
+    assert "2 projects need your decision." in flat
+    assert "missing: not on disk since 00:00" in flat  # 22:00 UTC is midnight in Madrid
+    assert "sealed 2026-10-02" in flat and "10 files" in flat and "verified OK 2026-10-02" in flat
+    assert f'data-dialog-open="retire-{pid}"' in html
+    assert f'action="/projects/{pid}/retry?from=inbox"' in html
+    assert "This deletes the app's record and the saved MHL history" in html
+    assert "Retire and download MHL" in html and "The archive folder itself is not touched." in html
+    assert re.search(r'data-state="missing"[^>]*><span class="light red"', html)
+    card = env.client.get(f"/projects/{pid}").text
+    assert "Retry" in card and "Retire" in card and "Verify now" not in card
+    assert "Ignore" not in card
+
+
+def test_headline_only_missing_is_honest(env: Env) -> None:
+    for state in ("needs_review", "unsealed", "ignored"):
+        env.db.delete_project(env.ids[state])
+    _make_missing(env)
+    flat = re.sub(r"\s+", " ", env.client.get("/").text)
+    assert "1 project is missing from the disk." in flat
+
+
+def test_retry_both_paths(env: Env) -> None:
+    pid = _make_missing(env)
+    r = env.client.post(f"/projects/{pid}/retry", headers=HX)
+    assert r.status_code == 200 and "Still not on disk" in r.text
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.MISSING
+    (env.archive / "2025" / "2025-05_CLIENTE-BORRADO").mkdir()
+    r = env.client.post(f"/projects/{pid}/retry?from=inbox", headers=HX)
+    assert r.status_code == 200 and "Back on disk" in r.text
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is not ProjectState.MISSING
+    assert env.client.post(f"/projects/{pid}/retry", headers=HX).status_code == 409
+
+
+def test_retire_deletes_the_project_and_leaves_a_log_line(env: Env) -> None:
+    pid = _make_missing(env)
+    folder = _mirror(env, "2025/2025-05_CLIENTE-BORRADO")
+    r = env.client.post(f"/projects/{pid}/retire?from=inbox", headers=HX)
+    assert r.status_code == 200 and "2025-05_CLIENTE-BORRADO retired" in r.text
+    assert env.db.get_project(pid) is None and not folder.exists()
+    activity = env.client.get("/fragments/activity").text
+    assert "Retired 2025-05_CLIENTE-BORRADO" in activity
+    assert "(history mirror deleted)" in activity
+    assert env.client.post(f"/projects/{pid}/retire", headers=HX).status_code == 404
+
+
+def test_retire_from_the_detail_page_redirects_home(env: Env) -> None:
+    pid = _make_missing(env)
+    r = env.client.post(f"/projects/{pid}/retire", headers=HX)
+    assert r.status_code == 200 and r.headers["HX-Redirect"].startswith("/?retired=")
+    pid = _make_missing(env, "2025-06_CLIENTE-OTRO")
+    r = env.client.post(f"/projects/{pid}/retire")  # no JS
+    assert r.status_code == 200 and r.url.path == "/"
+    assert "2025-06_CLIENTE-OTRO retired" in r.text
+
+
+def test_retire_refuses_a_project_that_is_not_missing(env: Env) -> None:
+    pid = env.ids["sealed"]
+    r = env.client.post(f"/projects/{pid}/retire", headers=HX)
+    assert r.status_code == 409
+    assert env.db.get_project(pid) is not None
+
+
+def test_history_zip_download(env: Env) -> None:
+    import io
+    import zipfile
+
+    pid = _make_missing(env)
+    assert env.client.get(f"/projects/{pid}/history.zip").status_code == 404
+    _mirror(env, "2025/2025-05_CLIENTE-BORRADO")
+    r = env.client.get(f"/projects/{pid}/history.zip")
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert 'filename="2025-05_CLIENTE-BORRADO-ascmhl.zip"' in r.headers["content-disposition"]
+    names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert any(n.endswith("ascmhl_chain.xml") for n in names)
+    assert env.client.get("/projects/999/history.zip").status_code == 404
+
+
+def test_verify_now_off_hours_queues_directly(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: NOW)  # 00:00 Madrid
+    pid = env.ids["sealed"]
+    card = env.client.get(f"/projects/{pid}").text
+    assert "Verify now" in card and "during working hours" not in card
+    r = env.client.post(f"/projects/{pid}/verify", headers=HX)
+    assert r.status_code == 200 and "Verification queued ahead of the rest" in r.text
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.QUEUED
+    job = env.db.queued_job(pid)
+    assert job is not None and job.kind is JobKind.VERIFY and job.bypass_hours
+    assert getattr(env.sup, "notified", 0) >= 1
+    assert "/cancel" in r.text  # a queued manual verify is cancellable
+    assert "Verify now " + "2025-01_CLIENTE-SELLADO" in env.client.get("/fragments/activity").text
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 200
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.SEALED
+
+
+def test_verify_now_in_working_hours_warns_first(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: datetime(2026, 10, 1, 10, 0, tzinfo=UTC))
+    pid = env.ids["sealed"]
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert "Verify now reads 28.4 GB from the NAS during working hours" in card
+    assert "can slow everyone down. Continue?" in card
+    assert f'data-dialog-open="verify-{pid}"' in card
+    r = env.client.post(f"/projects/{pid}/verify", headers=HX)
+    assert r.status_code == 200 and "Verification started." in r.text
+
+
+def test_verify_now_only_for_sealed(env: Env) -> None:
+    pid = env.ids["unsealed"]
+    assert "Verify now" not in env.client.get(f"/projects/{pid}").text
+    assert env.client.post(f"/projects/{pid}/verify", headers=HX).status_code == 409
+
+
+def test_api_projects_carries_missing_since(env: Env) -> None:
+    pid = _make_missing(env)
+    body = env.client.get("/api/projects").json()
+    row = next(p for p in body["projects"] if p["id"] == pid)
+    assert row["state"] == "missing" and row["state_before_missing"] == "sealed"
+    assert row["missing_since"]
+    assert env.client.get("/api/status").json()["counters"]["missing"] == 1
+
+
+def test_a_finished_verify_now_reads_verified(env: Env) -> None:
+    """The activity log names a running or queued Verify now as such, but a finished one as
+    "Verified", like any verification."""
+    pid = env.ids["sealed"]
+    job_id = env.db.enqueue_job(JobKind.VERIFY, pid, Trigger.MANUAL, 110, NOW, bypass_hours=True)
+    env.db.set_job_state(job_id, JobState.DONE, NOW)
+    text = re.sub(r"\s+", " ", env.client.get("/fragments/activity").text)
+    assert "Verified 2025-01_CLIENTE-SELLADO" in text
+    assert "Verify now 2025-01_CLIENTE-SELLADO" not in text
+
+
+def test_retire_works_without_javascript(env: Env) -> None:
+    pid = _make_missing(env)
+    page = env.client.get("/").text
+    assert f'<noscript><a class="btn small quiet" href="/projects/{pid}/history.zip"' in page
+    assert f'action="/projects/{pid}/retire?from=inbox"><button type="submit"' in page

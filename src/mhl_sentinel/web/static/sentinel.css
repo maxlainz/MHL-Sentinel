@@ -415,3 +415,12 @@ input[aria-invalid=true], select[aria-invalid=true] { border-color: var(--red);
 footer.foot { color: var(--ink-3); font-size: 12.5px; margin-top: 64px; padding-top: 18px;
               border-top: 1px solid var(--line); }
 [hidden] { display: none !important; }
+
+/* Confirmation dialogs (Retire, Verify now). */
+dialog.confirm { max-width: min(30rem, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--line-strong);
+                 border-radius: var(--radius); background: var(--surface); color: var(--ink);
+                 box-shadow: var(--shadow); }
+dialog.confirm::backdrop { background: rgba(0, 0, 0, .45); }
+dialog.confirm h2 { margin: 0 0 8px; font-size: 18px; overflow-wrap: anywhere; }
+dialog.confirm p { margin: 0 0 16px; color: var(--ink-2); }
+.dialog-acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }

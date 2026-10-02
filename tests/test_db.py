@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -58,7 +59,7 @@ def test_pragmas_and_schema(db: Database) -> None:
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert names >= TABLES
-    assert db.user_version == SCHEMA_VERSION == 1
+    assert db.user_version == SCHEMA_VERSION == len(MIGRATIONS) == 2
 
 
 def test_migrate_is_idempotent(tmp_path: Path) -> None:
@@ -66,10 +67,10 @@ def test_migrate_is_idempotent(tmp_path: Path) -> None:
     mounts = tmp_path / "no-mounts"
     with Database(path, mounts_file=mounts) as first:
         pid = first.upsert_project("2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
-        assert first.migrate() == 1
-        assert first.migrate() == 1
+        assert first.migrate() == SCHEMA_VERSION
+        assert first.migrate() == SCHEMA_VERSION
     with Database(path, mounts_file=mounts) as second:
-        assert second.user_version == 1
+        assert second.user_version == SCHEMA_VERSION
         project = second.get_project(pid)
         assert project is not None and project.preexisting
 
@@ -83,12 +84,12 @@ def test_forward_migration_from_previous_version(tmp_path: Path) -> None:
         pid = old.upsert_project("2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
     future = (*MIGRATIONS, "CREATE TABLE future_slot (k TEXT PRIMARY KEY, v TEXT);")
     with Database(path, mounts_file=mounts) as new:
-        assert new.migrate(future) == 2
-        assert new.migrate(future) == 2  # idempotent
+        assert new.migrate(future) == SCHEMA_VERSION + 1
+        assert new.migrate(future) == SCHEMA_VERSION + 1  # idempotent
         assert new.get_project(pid) is not None
         names = {r[0] for r in new.conn.execute("SELECT name FROM sqlite_master")}
         assert "future_slot" in names
-    with pytest.raises(RuntimeError, match="newer"):  # v2 database, v1 app (rollback)
+    with pytest.raises(RuntimeError, match="newer"):  # database newer than the app (rollback)
         Database(path, mounts_file=mounts).open()
 
 
@@ -300,3 +301,92 @@ def test_concurrent_writers(db: Database) -> None:
         t.join()
     count = db.conn.execute("SELECT COUNT(*) FROM file_hashes").fetchone()[0]
     assert count == 200
+
+
+def test_migration_v1_to_v2_on_a_database_of_the_previous_image(tmp_path: Path) -> None:
+    """D58, D63: the v2 script only adds columns; rows written by a v1 image survive with the
+    new columns empty (no project is missing, no job bypasses the working hours)."""
+    path = tmp_path / "state.db"
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.executescript(f"BEGIN;\n{MIGRATIONS[0]}\nPRAGMA user_version = 1;\nCOMMIT;")
+    conn.execute(
+        "INSERT INTO projects (rel_path, name, state, preexisting, first_seen, error)"
+        " VALUES ('2024/2024-01_CLIENTE-CAMPANA', '2024-01_CLIENTE-CAMPANA', 'error', 1, ?,"
+        " 'folder missing')",
+        (to_iso(T0),),
+    )
+    conn.execute(
+        "INSERT INTO jobs (kind, project_id, trigger, state, priority, created_at)"
+        " VALUES ('verify', 1, 'auto', 'queued', 10, ?)",
+        (to_iso(T0),),
+    )
+    conn.close()
+
+    with Database(path, mounts_file=tmp_path / "no-mounts") as db:
+        assert db.user_version == 2
+        project = db.get_project("2024/2024-01_CLIENTE-CAMPANA")
+        assert project is not None and project.state is ProjectState.ERROR
+        assert project.missing_since is None and project.state_before_missing is None
+        job = db.next_job(T0)
+        assert job is not None and job.kind is JobKind.VERIFY and job.bypass_hours is False
+        assert db.next_job(T0, bypass_only=True) is None
+        db.update_project_fields(
+            project.id,
+            state=ProjectState.MISSING,
+            missing_since=T0,
+            state_before_missing=ProjectState.SEALED,
+        )
+        again = db.get_project(project.id)
+        assert again is not None and again.state_before_missing is ProjectState.SEALED
+        assert again.missing_since == to_iso(T0)
+
+
+def test_bypass_jobs_promotion_and_finished_jobs(db: Database) -> None:
+    pid = db.upsert_project("2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    auto = db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 10, T0)
+    seal = db.enqueue_job(JobKind.SEAL, None, Trigger.MANUAL, 130, T0)
+    assert db.next_job(T0, bypass_only=True) is None
+    # A manual request over a queued automatic job promotes it instead of duplicating it.
+    assert db.enqueue_job(JobKind.VERIFY, pid, Trigger.MANUAL, 110, T0, bypass_hours=True) == auto
+    promoted = db.get_job(auto)
+    assert promoted is not None and promoted.trigger is Trigger.MANUAL
+    assert promoted.priority == 110 and promoted.bypass_hours
+    assert db.next_job(T0, bypass_only=True) == promoted
+    next_any = db.next_job(T0)
+    assert next_any is not None and next_any.id == seal
+    # An automatic duplicate never demotes it.
+    assert db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 10, T0) == auto
+    assert db.get_job(auto) == promoted
+
+    done = db.record_finished_job(JobKind.RETIRE, None, Trigger.MANUAL, JobState.DONE, T0)
+    row = db.get_job(done)
+    assert row is not None and row.state is JobState.DONE and row.project_id is None
+    assert row.started_at == row.finished_at == to_iso(T0)
+    assert db.next_job(T0) == db.get_job(seal)  # never picked by the hasher
+
+
+def test_rename_and_delete_project_cascade(db: Database) -> None:
+    pid = db.upsert_project("2024/2024-01_A", "2024-01_A", True, T0)
+    other = db.upsert_project("2024/2024-02_B", "2024-02_B", True, T0)
+    db.replace_files(pid, [FileStat("a.mov", 1, 1)])
+    db.replace_sealed_files(pid, [SealedFile("a.mov", 1, 1, "aa")])
+    db.put_hash(pid, "a.mov", 1, 1, "xxh128", "aa", T0)
+    db.replace_review_items(pid, [ReviewItem("a.mov", ChangeKind.DELETED, 1)])
+    scan = db.start_scan("project", pid, T0)
+    db.finish_scan(scan, files=1, bytes=1, now=T0)
+    job = db.enqueue_job(JobKind.SEAL, pid, Trigger.MANUAL, 130, T0)
+    db.log(job, "info", "x", T0)
+    db.replace_files(other, [FileStat("b.mov", 1, 1)])
+
+    db.rename_project(pid, "2025/2024-01_A_RENAMED", "2024-01_A_RENAMED")
+    moved = db.get_project(pid)
+    assert moved is not None and moved.rel_path == "2025/2024-01_A_RENAMED"
+    assert moved.name == "2024-01_A_RENAMED" and db.get_files(pid)  # data follows the row
+
+    db.delete_project(pid)
+    assert db.get_project(pid) is None
+    for table in ("files", "sealed_files", "file_hashes", "review_items", "scans", "jobs"):
+        n = db.conn.execute(f"SELECT COUNT(*) FROM {table} WHERE project_id = ?", (pid,))
+        assert n.fetchone()[0] == 0, table
+    assert db.conn.execute("SELECT COUNT(*) FROM job_log").fetchone()[0] == 0
+    assert db.get_files(other)  # the other project is untouched
