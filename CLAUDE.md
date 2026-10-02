@@ -8,14 +8,14 @@ Servicio en contenedor Docker con GUI web mínima que vigila un directorio de ar
 ```
 CLAUDE.md              este router
 .claude/rules/         normas (una por archivo)        .claude/skills/   obsidian-vault · release
-.claude/settings.json  hooks: pull + issues al arrancar · bloqueo de rutas/IPs al escribir · push al cerrar (no-op sin remoto)
+.claude/settings.json  hooks: pull + issues al arrancar · bloqueo de rutas/IPs al escribir · veto de atribuciones en commits y PR (D64) · push al cerrar (no-op sin remoto)
 docs/decisiones.md     ADRs D1–Dn                      docs/bitacora/    una entrada por sesión (NN-slug.md); 02 cubre el MVP
 docs/roadmap.md        hitos → tags v0.N.0              docs/contexto-archivo.md  el archivo real, anonimizado
 docs/research/         informes de subagentes (inglés, TL;DR en español): spec ASC MHL · arquitectura del watcher
 src/mhl_sentinel/      código (mhlwriter desde hito 0; history_mirror = espejo de ascmhl/ en /config, D59)  tests/  pytest; fixtures sintéticos en tests/fixtures/archive (make fixtures, gitignored)
 .github/workflows/     ci.yml (push/PR); release.yml en hito 2    pyproject.toml · uv.lock · .python-version
 deploy/                Dockerfile, compose, plantillas NAS (hito 2)
-scripts/leak-check.sh  nada del estudio en el repo      samples/          material local, gitignored
+scripts/leak-check.sh  nada del estudio en el repo · attribution-check.sh  sin atribuciones (D64)     samples/          material local, gitignored
 scripts/leak-patterns.local.txt  patrones privados del leak-check (gitignored, D40)
 scripts/make_fixtures.py  generador del archivo sintético
 Makefile · CHANGELOG.md · README.md · .env.example
@@ -49,7 +49,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 ## Docs
 | Archivo | Leer cuando… |
 |---|---|
-| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D63; entrevistas de producto y técnica cerradas) |
+| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D64; entrevistas de producto y técnica cerradas) |
 | `docs/contexto-archivo.md` | Vas a tocar detección de proyectos, exclusiones, política ante cambios, o necesitas saber qué exige el estudio |
 | `docs/research/asc-mhl-spec-y-referencia.md` | Vas a escribir o leer manifiestos, usar `mhllib`, elegir hash, o dudas de qué hace `ascmhl` ante un cambio |
 | `docs/research/arquitectura-watcher.md` | Vas a tocar scan, scheduler, hasher, GUI, Docker o la DB |
@@ -67,7 +67,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 
 ## Comandos
 ```sh
-make ci           # leak-check + lint + typecheck + test — el gate de cada commit
+make ci           # leak-check + attribution-check + lint + typecheck + test — el gate de cada commit
 make leak-check   # nada del estudio en el árbol (rutas, IPs, patrones privados en scripts/leak-patterns.local.txt)
 make fixtures     # archivo sintético en tests/fixtures/archive (determinista, gitignored)
 make run          # app en local sobre fixtures (hito 1)
@@ -80,7 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
-- **Estado (2026-10-02, bitácora 04, `v0.6.0`)**: proyectos desaparecidos (D58–D63): estado `missing` al primer scan, `Retire`/`Retry` en la Bandeja, espejo del historial en `/config/history/`, carpetas movidas reconocidas por la cadena, `Verify now` por proyecto saltando el horario con aviso. DB `user_version` 2. 225 tests. PR #13.
+- **Estado (2026-10-02, bitácora 04, `v0.6.0`)**: proyectos desaparecidos (D58–D63): estado `missing` al primer scan, `Retire`/`Retry` en la Bandeja, espejo del historial en `/config/history/`, carpetas movidas reconocidas por la cadena, `Verify now` por proyecto saltando el horario con aviso. DB `user_version` 2. 225 tests. PR #13. Mismo día, bitácora 05: atribuciones quitadas de `main`, del tag `v0.6.0` y de los PR #13–#14 (historial reescrito por decisión del owner) y vetadas en `make ci` y por hook (D64).
 - **Estado anterior (2026-10-01, bitácora 03, `v0.5.1`)**: **MVP completo (D44)** más la GUI «Bandeja» (D54, #5): portada con frase de estado honesta, solo lo que pide decisión, `Seal`/`Cancel` de un clic, log de actividad, tema auto/claro/oscuro en Ajustes (D56); hoja y JS propios sin Pico. `main` protegida: todo por PR (D55). Base: núcleo, daemon con horario laboral y SIGTERM limpio, GUI de una pantalla, raíz de solo referencias, verificación escalonada de 90 días; imagen multi-arch en GHCR con prueba de humo en el pipeline. 182 tests, todos los manifiestos validados por la referencia. D1–D57, H1–H19. `v0.5.1`: `Cancel` también aborta un Seal/Accept manual en marcha (D57, #10). Patch `v0.4.3`: botón `Cancel` para un Seal/Accept en cola (D53, #4). Auto-actualizable con Watchtower (`latest` siempre, recreación a lo bruto probada). **Instalado en el NAS del estudio** (2026-10-01): 95 proyectos, 32 050 ficheros, 11,8 TB detectados en ~34 s (H19); nada sellado aún. Issues: #2 (upstream, aplazado), #3 (`roothash` raíz; MediaVerify pendiente del owner).
 - **Después**: comprobar en el NAS que Watchtower sube `v0.6.0`; primer `Seal` de un proyecto pequeño en el NAS y medir MB/s del hasher (predicción en bitácora 02); luego el backlog de 95 proyectos a ritmo de ventanas; MediaVerify sobre la raíz (#3). Luego: plantilla Container Station probada, Apprise (D22), issue #2.
 

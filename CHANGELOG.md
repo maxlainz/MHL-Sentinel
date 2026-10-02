@@ -3,6 +3,14 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+### Añadido
+- `make attribution-check` en `make ci` y en la CI de cada PR (también al editar su descripción): falla si un commit o la descripción llevan trailers de atribución o enlaces de sesión (D64). Hook `PreToolUse` equivalente para los agentes.
+
+### Cambiado
+- Historial de `main` reescrito para quitar atribuciones de los commits de #13 y `v0.6.0`; el tag `v0.6.0` apunta al commit nuevo, con el mismo contenido (D64).
+
+### Decidido
+- D64: ver `docs/decisiones.md`.
 
 ## [0.6.0] - 2026-10-02 — Proyectos desaparecidos
 ### Añadido
