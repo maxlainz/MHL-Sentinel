@@ -13,10 +13,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from mhl_sentinel import sealer
-from mhl_sentinel.clock import from_iso
+from mhl_sentinel.clock import from_iso, utcnow
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ProjectRow
-from mhl_sentinel.models import ChangeKind, JobKind, JobState, ProjectState
+from mhl_sentinel.models import ChangeKind, JobKind, JobState, ProjectState, Trigger
 
 GREEN, AMBER, RED, GREY = "green", "amber", "red", "grey"
 
@@ -28,6 +28,7 @@ LIGHT: dict[ProjectState, str] = {
     ProjectState.HASHING: AMBER,
     ProjectState.NEEDS_REVIEW: RED,
     ProjectState.ERROR: RED,
+    ProjectState.MISSING: RED,
     ProjectState.IGNORED: GREY,
 }
 _SEVERITY = {RED: 0, AMBER: 1, GREEN: 2, GREY: 3}
@@ -40,6 +41,7 @@ STATE_LABEL: dict[ProjectState, str] = {
     ProjectState.HASHING: "reading files",
     ProjectState.NEEDS_REVIEW: "needs review",
     ProjectState.ERROR: "problem",
+    ProjectState.MISSING: "missing",
     ProjectState.IGNORED: "ignored",
 }
 
@@ -49,7 +51,9 @@ JOB_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Sealing a new version of",
     JobKind.VERIFY: "Verifying",
     JobKind.ROOT_MANIFEST: "Updating the archive manifest",
+    JobKind.RETIRE: "Retiring",
 }
+VERIFY_NOW_LABEL = "Verify now"  # D63: a manual verification, also inside working hours
 
 _UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
@@ -122,6 +126,13 @@ def percent(job: JobRow | None) -> int | None:
     if job.files_total > 0:
         return min(100, int(job.files_done * 100 / job.files_total))
     return 0
+
+
+def job_label(job: JobRow) -> str:
+    """What a job is called in the header and the project card."""
+    if job.kind is JobKind.VERIFY and job.trigger is Trigger.MANUAL:
+        return VERIFY_NOW_LABEL
+    return JOB_LABEL.get(job.kind, str(job.kind))
 
 
 def running_job_for(db: Database, project_id: int, current: JobRow | None) -> JobRow | None:
@@ -199,6 +210,10 @@ def review_summary(db: Database, project: ProjectRow) -> str:
     return "something changed since the last seal"
 
 
+def _missing_since(project: ProjectRow, tz: ZoneInfo) -> str:
+    return fmt_when(project.missing_since, tz, utcnow()) or "the last round"
+
+
 def status_text(
     db: Database,
     project: ProjectRow,
@@ -231,6 +246,8 @@ def status_text(
         return "reading files" + (f" · {pct}%" if pct is not None else "")
     if state is ProjectState.IGNORED:
         return "ignored"
+    if state is ProjectState.MISSING:
+        return "missing: not on disk since " + _missing_since(project, tz)
     return "problem: " + (project.error or "unknown error") + " · retried on the next round"
 
 
@@ -317,6 +334,7 @@ class Counters:
     unsealed: int = 0
     queued: int = 0
     errors: int = 0
+    missing: int = 0
 
 
 def counters(projects: list[ProjectRow], queued_jobs: int) -> Counters:
@@ -331,6 +349,8 @@ def counters(projects: list[ProjectRow], queued_jobs: int) -> Counters:
             c.unsealed += 1
         elif p.state is ProjectState.ERROR:
             c.errors += 1
+        elif p.state is ProjectState.MISSING:
+            c.missing += 1
     return c
 
 
@@ -387,7 +407,7 @@ class InboxRow:
 
 @dataclass(slots=True)
 class Inbox:
-    decide: list[InboxRow] = field(default_factory=list)  # needs review + problems (red)
+    decide: list[InboxRow] = field(default_factory=list)  # needs review, problems, missing (red)
     unsealed: list[InboxRow] = field(default_factory=list)  # waiting for the owner's Seal
     moving: list[InboxRow] = field(default_factory=list)  # queued, reading, new files
     quiet: list[InboxRow] = field(default_factory=list)  # sealed
@@ -398,12 +418,16 @@ class Inbox:
 INBOX_PREVIEW = 6  # unsealed rows shown before "show N more"
 
 
-def _meta(project: ProjectRow) -> str:
+def _meta(project: ProjectRow, tz: ZoneInfo | None = None) -> str:
     parts = []
+    if project.state is ProjectState.MISSING and tz is not None and project.last_sealed_at:
+        parts.append(f"sealed {fmt_date(project.last_sealed_at, tz)}")
     if project.file_count is not None:
         parts.append(f"{project.file_count} file{'' if project.file_count == 1 else 's'}")
     if project.total_bytes is not None:
         parts.append(human_size(project.total_bytes))
+    if project.state is ProjectState.MISSING and tz is not None and project.last_verified_at:
+        parts.append(f"verified OK {fmt_date(project.last_verified_at, tz)}")
     return " · ".join(parts)
 
 
@@ -444,9 +468,9 @@ def inbox(
     box = Inbox(next_verification=next_verification(projects, settings, now))
     tz = settings.tzinfo
     for p in sorted_projects(projects):
-        row = InboxRow(project_view(db, p, settings, current), _meta(p))
+        row = InboxRow(project_view(db, p, settings, current), _meta(p, tz))
         state = p.state
-        if state in (ProjectState.NEEDS_REVIEW, ProjectState.ERROR):
+        if state in (ProjectState.NEEDS_REVIEW, ProjectState.ERROR, ProjectState.MISSING):
             box.decide.append(row)
         elif state is ProjectState.UNSEALED:
             box.unsealed.append(row)
@@ -499,6 +523,12 @@ def detail_sentence(db: Database, project: ProjectRow, settings: Settings) -> st
         return text
     if state is ProjectState.IGNORED:
         return "Ignored. The app leaves this folder alone."
+    if state is ProjectState.MISSING:
+        text = f"This folder has not been on disk since {_missing_since(project, tz)}."
+        return text + (
+            " Retry checks the folder again. Retire deletes the app's record and the saved "
+            "MHL history of this project; the archive itself is not touched."
+        )
     return f"Something went wrong: {project.error or 'unknown error'}. The app retries next round."
 
 
@@ -518,7 +548,11 @@ def headline(projects: list[ProjectRow], archive_ok: bool) -> Headline:
     if not archive_ok:
         return Headline("alert", "The archive is not reachable.")
     states = Counter(p.state for p in projects)
-    decide = states[ProjectState.NEEDS_REVIEW] + states[ProjectState.ERROR]
+    missing = states[ProjectState.MISSING]
+    decide = states[ProjectState.NEEDS_REVIEW] + states[ProjectState.ERROR] + missing
+    if decide and decide == missing:
+        text = _n(missing, "project is", "projects are") + " missing from the disk."
+        return Headline("alert", text)
     if decide:
         return Headline("alert", _n(decide, "project needs", "projects need") + " your decision.")
     if states[ProjectState.UNSEALED]:
@@ -559,6 +593,7 @@ _DONE_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Sealed a new version of",
     JobKind.VERIFY: "Verified",
     JobKind.ROOT_MANIFEST: "Updated the archive manifest",
+    JobKind.RETIRE: "Retired",
 }
 _FAILED_LABEL: dict[JobKind, str] = {
     JobKind.SEAL: "Could not seal",
@@ -566,6 +601,7 @@ _FAILED_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Could not seal a new version of",
     JobKind.VERIFY: "Could not verify",
     JobKind.ROOT_MANIFEST: "Could not update the archive manifest",
+    JobKind.RETIRE: "Could not retire",
 }
 _QUEUED_LABEL: dict[JobKind, str] = {
     JobKind.SEAL: "Seal",
@@ -573,10 +609,12 @@ _QUEUED_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Seal a new version of",
     JobKind.VERIFY: "Verify",
     JobKind.ROOT_MANIFEST: "Update the archive manifest",
+    JobKind.RETIRE: "Retire",
 }
 
 
 _REVIEW_LOG_PREFIX = sealer.REVIEW_LOG_PREFIX
+_RETIRE_PREFIX, _RETIRE_SUFFIX = sealer.RETIRE_LOG_TEMPLATE.split("{rel_path}")
 
 
 def _went_to_review(db: Database, job: JobRow) -> str:
@@ -597,6 +635,19 @@ def _went_to_review(db: Database, job: JobRow) -> str:
     return ""
 
 
+def _retire_message(db: Database, job: JobRow) -> str:
+    for entry in db.get_job_log(job.id):
+        if entry.msg.startswith(_RETIRE_PREFIX):
+            return entry.msg
+    return ""
+
+
+def _retired_name(message: str) -> str:
+    """The project's folder name out of ``retired <rel_path> (history mirror deleted)``."""
+    rel = message.removeprefix(_RETIRE_PREFIX).removesuffix(_RETIRE_SUFFIX)
+    return rel.rsplit("/", 1)[-1]
+
+
 def activity(
     db: Database, tz: ZoneInfo, now: datetime, current: JobRow | None, limit: int = 8
 ) -> Activity:
@@ -607,6 +658,9 @@ def activity(
 
     def label(table: dict[JobKind, str], job: JobRow) -> str:
         text = table.get(job.kind, str(job.kind))
+        manual_verify = job.kind is JobKind.VERIFY and job.trigger is Trigger.MANUAL
+        if manual_verify and (table is JOB_LABEL or table is _QUEUED_LABEL):  # not when finished
+            text = VERIFY_NOW_LABEL
         if job.project_id is not None and job.project_id in names:
             text += " " + names[job.project_id]
         return text
@@ -640,7 +694,11 @@ def activity(
     )
     for job in finished[:limit]:
         when = fmt_when(job.finished_at, tz, now)
-        if job.state is JobState.DONE:
+        if job.state is JobState.DONE and job.kind is JobKind.RETIRE:
+            message = _retire_message(db, job)
+            text = "Retired " + _retired_name(message)
+            out.past.append(ActivityRow(when, text.strip(), "done", None, message))
+        elif job.state is JobState.DONE:
             review = _went_to_review(db, job)
             if review and job.kind is JobKind.VERIFY:
                 text = "Verification found problems in " + names.get(job.project_id or -1, "")

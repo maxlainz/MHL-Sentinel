@@ -21,8 +21,9 @@ Resumen genérico del entorno real (sin nombres, rutas ni IPs: norma `repo-publi
 
 ## Consecuencias para el diseño
 - inotify no es fiable como fuente de verdad (cambios hechos desde clientes SMB pueden no llegar al contenedor): scan programado con snapshot.
-- El coste de lecturas en horario de trabajo es el requisito central: en horario laboral (L–V 09:00–19:00 por defecto, D33) la app no hace scan, hash ni verificación; fuera de él trabaja a tope con un solo lector (D34).
+- El coste de lecturas en horario de trabajo es el requisito central: en horario laboral (L–V 09:00–19:00 por defecto, D33) la app no hace scan, hash ni verificación (salvo un `Verify now` confirmado tras aviso, D63); fuera de él trabaja a tope con un solo lector (D34).
 - Lo normal es que producción pulse `Seal` al terminar de archivar; el sellado automático a los 7 días sin cambios es la red de seguridad (D31).
 - Ficheros borrados o modificados en un proyecto cerrado son una anomalía: revisión humana (D9, D17).
+- Un proyecto entero que desaparece es raro pero ocurre con los años (expurgo o accidente): pasa a `missing` y producción lo da de baja (`Retire`, borra todo salvo una línea de log) o reintenta (`Retry`); el historial se espeja en `/config/history/` para poder descargarlo antes (D58–D62).
 - Ficheros añadidos (reapertura, versiones nuevas) son normales: nueva generación automática (D9).
 - Los ~95 proyectos preexistentes no se sellan solos: botón `Sellar` (D15, D16).

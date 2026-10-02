@@ -198,7 +198,7 @@ def test_accept_and_vanished_project_regenerate_the_root(
     shutil.rmtree(root / PROJECTS[2])
     sealer.run_scan_cycle(db, settings, now=utcnow())
     gone = db.get_project(PROJECTS[2])
-    assert gone is not None and gone.state is ProjectState.ERROR
+    assert gone is not None and gone.state is ProjectState.MISSING  # D58
     assert rootmanifest.root_manifest_needed(db, settings)  # the referenced set changed
     manifest = rootmanifest.refresh_root_manifest(db, settings, now=utcnow())
     assert manifest is not None and manifest.name.startswith("0001_")  # rebuilt again

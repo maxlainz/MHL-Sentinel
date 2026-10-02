@@ -1,3 +1,4 @@
+{% import "_dialogs.html" as dlg %}
 {% macro act(name, label, cls="", confirm="") -%}
 <form class="inline" method="post" action="/projects/{{ p.id }}/{{ name }}"
       hx-post="/projects/{{ p.id }}/{{ name }}" hx-target="#project-card" hx-swap="outerHTML"
@@ -26,6 +27,12 @@
     {% endif %}
     {% if can_seal %}{{ act("seal", "Seal") }}{% endif %}
     {% if can_cancel %}{{ act("cancel", "Cancel", "quiet") }}{% endif %}
+    {% if can_retry %}
+    {{ act("retry", "Retry", "decide") }}
+    {{ dlg.retire(p.id, p.name, "#project-card") }}
+    {% endif %}
+    {% if can_verify and verify_warn %}{{ dlg.verify_now(p.id, p.total_bytes, "#project-card") }}
+    {% elif can_verify %}{{ act("verify", "Verify now", "quiet") }}{% endif %}
     <span class="spacer"></span>
     {% if can_ignore %}{{ act("ignore", "Ignore", "ghost", "Ignore this folder? The app will stop watching it.") }}{% endif %}
     {% if can_unignore %}{{ act("unignore", "Unignore", "quiet") }}{% endif %}
@@ -33,6 +40,9 @@
   {% if can_review %}
   <p class="footnote">Accept: the current history is kept aside and the project is sealed again
     as it is today. Postpone: nothing changes; it stays here until you decide.</p>
+  {% elif can_retry %}
+  <p class="footnote">Retry looks for the folder again right now. Retire deletes the app's record
+    and the saved MHL history; the archive folder itself is not touched.</p>
   {% elif can_cancel and p.state.value == 'hashing' %}
   <p class="footnote">Cancel stops the reading at the next file. Nothing has been written; the
     files already read are not read again on the next Seal.</p>

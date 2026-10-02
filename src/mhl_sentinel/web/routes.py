@@ -18,18 +18,20 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sse_starlette.sse import EventSourceResponse
 
-from mhl_sentinel import __version__, rootmanifest, sealer
+from mhl_sentinel import __version__, history_mirror, rootmanifest, sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import ENV_ONLY_FIELDS, Settings, load_settings, save_yaml
 from mhl_sentinel.db import JobRow, ProjectRow
 from mhl_sentinel.discovery import find_stray_entries
-from mhl_sentinel.models import ProjectState
+from mhl_sentinel.models import JobKind, ProjectState
+from mhl_sentinel.schedule import WorkingHours
 from mhl_sentinel.web import settings_form, views
 from mhl_sentinel.web.deps import BusLike, EventLike, StatusLike, WebContext
 
@@ -110,6 +112,8 @@ def _job_dict(job: JobRow) -> dict[str, Any]:
 def _project_dict(project: ProjectRow) -> dict[str, Any]:
     data = dataclasses.asdict(project)
     data["state"] = project.state.value
+    before = project.state_before_missing
+    data["state_before_missing"] = before.value if before is not None else None
     return data
 
 
@@ -124,7 +128,7 @@ def header_context(ctx: WebContext) -> dict[str, Any]:
     if job is not None:
         fresh = ctx.db.get_job(job.id) or job
         project = ctx.db.get_project(fresh.project_id) if fresh.project_id is not None else None
-        job_text = views.JOB_LABEL.get(fresh.kind, str(fresh.kind))
+        job_text = views.job_label(fresh)
         if project is not None:
             job_text += " " + project.name
         job_pct = views.percent(fresh)
@@ -203,13 +207,18 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "review": review,
         "verification": views.verify_view(ctx.db, project, tz) if verification else None,
         "job": job,
-        "job_label": "" if job is None else views.JOB_LABEL.get(job.kind, str(job.kind)),
+        "job_label": "" if job is None else views.job_label(job),
         "job_running": job is not None and job.state.value == "running",
         "job_pct": views.percent(job),
         "can_seal": project.state is ProjectState.UNSEALED,
         "can_cancel": sealer.cancellable_job(ctx.db, project) is not None,
         "can_review": project.state is ProjectState.NEEDS_REVIEW,
-        "can_ignore": project.state not in (ProjectState.IGNORED, ProjectState.HASHING),
+        "can_ignore": project.state
+        not in (ProjectState.IGNORED, ProjectState.HASHING, ProjectState.MISSING),
+        "can_retry": project.state is ProjectState.MISSING,
+        "can_verify": project.state is ProjectState.SEALED,
+        "verify_warn": project.state is ProjectState.SEALED
+        and WorkingHours.from_settings(settings).is_working(utcnow()),
         "can_unignore": project.state is ProjectState.IGNORED,
     }
 
@@ -236,10 +245,12 @@ def index(request: Request) -> Response:
         settings.ignore_prefixes,
         status.archive_reachable,
     )
+    retired = request.query_params.get("retired", "")[:200]
     context = {
         **activity_context(ctx),
         **header_context(ctx),
         **projects_context(ctx),
+        "notice": f"{retired} retired" if retired else "",
         "strays": strays[:MAX_STRAYS_SHOWN],
         "strays_more": max(0, len(strays) - MAX_STRAYS_SHOWN),
     }
@@ -300,6 +311,126 @@ _ACTIONS: dict[str, tuple[Callable[..., object], str]] = {
 }
 
 
+def _action_response(
+    request: Request,
+    ctx: WebContext,
+    project_id: int,
+    *,
+    notice: str,
+    error: str = "",
+    status_code: int = 200,
+    retired: str | None = None,
+) -> Response:
+    """The answer of a button: back to the inbox or the detail page, or (Retire) gone."""
+    # Buttons in the inbox (main screen) come back to the inbox; the detail page to the card.
+    from_inbox = request.query_params.get("from") == "inbox"
+    if retired is not None:
+        # The project no longer exists: nothing to render but the inbox, with the notice.
+        home = "/?" + urlencode({"retired": retired})
+        if not is_htmx(request):
+            return RedirectResponse(home, status_code=303)
+        if not from_inbox:
+            return Response(headers={"HX-Redirect": home})
+        context = projects_context(ctx)
+        context.update(notice=notice, error="")
+        response = templates.TemplateResponse(request, "_projects.html", context)
+        response.headers["HX-Trigger"] = "inbox-changed"
+        return response
+    if not is_htmx(request):
+        return RedirectResponse("/" if from_inbox else f"/projects/{project_id}", status_code=303)
+    if from_inbox:
+        context = projects_context(ctx)
+        name = _get_project(ctx, project_id).name
+        context.update(notice=f"{name}: {notice}" if notice else "", error=error)
+        response = templates.TemplateResponse(
+            request, "_projects.html", context, status_code=status_code
+        )
+    else:
+        project = _get_project(ctx, project_id)
+        context = project_context(ctx, project, with_history=False)
+        context.update(notice=notice, error=error)
+        response = templates.TemplateResponse(
+            request, "_project_card.html", context, status_code=status_code
+        )
+    # The buttons do not publish bus events: tell the headline and the activity log to refresh.
+    response.headers["HX-Trigger"] = "inbox-changed"
+    return response
+
+
+@router.post("/projects/{project_id}/retire", response_class=HTMLResponse)
+def project_retire(request: Request, project_id: int) -> Response:
+    """Retire (D60): deletes the record and the history mirror of a ``missing`` project."""
+    ctx = ctx_of(request)
+    _get_project(ctx, project_id)
+    try:
+        name = sealer.request_retire(ctx.db, ctx.settings, project_id, utcnow())
+    except sealer.SealerError as exc:
+        return _action_response(
+            request, ctx, project_id, notice="", error=str(exc), status_code=409
+        )
+    return _action_response(request, ctx, project_id, notice=f"{name} retired", retired=name)
+
+
+@router.post("/projects/{project_id}/retry", response_class=HTMLResponse)
+def project_retry(request: Request, project_id: int) -> Response:
+    """Retry (D61): one look at the folder now."""
+    ctx = ctx_of(request)
+    _get_project(ctx, project_id)
+    try:
+        back = sealer.request_retry(ctx.db, ctx.settings, project_id, utcnow())
+    except sealer.SealerError as exc:
+        return _action_response(
+            request, ctx, project_id, notice="", error=str(exc), status_code=409
+        )
+    if back and ctx.db.has_open_job(project_id, JobKind.VERIFY):
+        ctx.supervisor.notify_job_queued()
+        working = WorkingHours.from_settings(ctx.settings).is_working(utcnow())
+        notice = "Back on disk: verification queued" + (
+            ", it runs after working hours." if working else "."
+        )
+    elif back:
+        notice = "Back on disk."
+    else:
+        notice = "Still not on disk."
+    return _action_response(request, ctx, project_id, notice=notice)
+
+
+@router.post("/projects/{project_id}/verify", response_class=HTMLResponse)
+def project_verify(request: Request, project_id: int) -> Response:
+    """Verify now (D63): a manual verification that also runs inside working hours."""
+    ctx = ctx_of(request)
+    _get_project(ctx, project_id)
+    now = utcnow()
+    try:
+        sealer.request_verify_now(ctx.db, project_id, now)
+    except sealer.SealerError as exc:
+        return _action_response(
+            request, ctx, project_id, notice="", error=str(exc), status_code=409
+        )
+    ctx.supervisor.notify_job_queued()
+    working = WorkingHours.from_settings(ctx.settings).is_working(now)
+    # D63: inside working hours it starts at once (a paused job yields to it); outside them it
+    # goes ahead of everything waiting, after the job that may be running.
+    notice = "Verification started." if working else "Verification queued ahead of the rest."
+    return _action_response(request, ctx, project_id, notice=notice)
+
+
+@router.get("/projects/{project_id}/history.zip")
+def project_history_zip(request: Request, project_id: int) -> Response:
+    """The saved MHL history of a project as a zip (D60: download before Retire)."""
+    ctx = ctx_of(request)
+    project = _get_project(ctx, project_id)
+    data = history_mirror.zip_history(ctx.settings, project)
+    if data is None:
+        raise HTTPException(status_code=404, detail="no saved MHL history for this project")
+    filename = f"{project.name}-ascmhl.zip"
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/projects/{project_id}/{action}", response_class=HTMLResponse)
 def project_action(request: Request, project_id: int, action: str) -> Response:
     if action not in _ACTIONS:
@@ -321,27 +452,9 @@ def project_action(request: Request, project_id: int, action: str) -> Response:
             ctx.supervisor.notify_job_queued()  # wake the hasher thread instead of waiting a tick
     except sealer.SealerError as exc:
         status_code, error, notice = 409, str(exc), ""
-    # Buttons in the inbox (main screen) come back to the inbox; the detail page to the card.
-    from_inbox = request.query_params.get("from") == "inbox"
-    if not is_htmx(request):
-        return RedirectResponse("/" if from_inbox else f"/projects/{project_id}", status_code=303)
-    if from_inbox:
-        context = projects_context(ctx)
-        name = _get_project(ctx, project_id).name
-        context.update(notice=f"{name}: {notice}" if notice else "", error=error)
-        response = templates.TemplateResponse(
-            request, "_projects.html", context, status_code=status_code
-        )
-    else:
-        project = _get_project(ctx, project_id)
-        context = project_context(ctx, project, with_history=False)
-        context.update(notice=notice, error=error)
-        response = templates.TemplateResponse(
-            request, "_project_card.html", context, status_code=status_code
-        )
-    # The buttons do not publish bus events: tell the headline and the activity log to refresh.
-    response.headers["HX-Trigger"] = "inbox-changed"
-    return response
+    return _action_response(
+        request, ctx, project_id, notice=notice, error=error, status_code=status_code
+    )
 
 
 @router.post("/scan-now", response_class=HTMLResponse)
