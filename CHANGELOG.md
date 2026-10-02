@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-10-02 — Proyectos desaparecidos
 ### Añadido
 - Proyectos desaparecidos (D58–D62): estado `missing` desde el primer scan en que la carpeta falta; tarjeta en «Needs your decision» con `Retire` (diálogo: `Retire`, `Retire and download MHL`, `Cancel`; borra la fila, la caché de hashes y el espejo del historial, deja una línea en el log) y `Retry` (comprueba la carpeta al momento y, si está, recupera el estado y encola una verificación). Cortafuegos: una raíz que lista cero proyectos cuenta como archivo inaccesible. Una carpeta movida o renombrada con la misma cadena `ascmhl` se reconoce como el mismo proyecto.
 - Espejo del historial `ascmhl/` de cada proyecto en `<config>/history/` tras cada generación y en el scan si difiere (D59); `GET /projects/{id}/history.zip`.

@@ -20,4 +20,4 @@
 Notas leídas: `Historial ASC MHL anidado`, `MHL Sentinel`, `Detección de cambios en un volumen de red`. Sin concepto nuevo de archivo: «proyecto desaparecido» es política de la app, no concepto de dominio; el espejo del historial es mecánica de copia de seguridad. La nota `MHL Sentinel` no cambia (los conceptos en que se apoya son los mismos).
 
 ## Siguiente paso
-Abrir PR de la rama, integrar y cortar `v0.6.0` (skill `release`). Después, lo que quedó de la sesión 03: primer `Seal` en el NAS y MB/s del hasher, backlog de 95, MediaVerify (#3), Apprise (D22).
+Integrado por PR #13 y publicado como `v0.6.0`. Después, lo que quedó de la sesión 03: primer `Seal` en el NAS y MB/s del hasher, backlog de 95, MediaVerify (#3), Apprise (D22).
