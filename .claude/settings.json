@@ -52,6 +52,18 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r \".tool_input.command // empty\" | { c=$(cat); printf \"%s\" \"$c\" | grep -q -E \"git (commit|tag)|gh (pr|issue|release)\" || exit 0; hit=$(printf \"%s\" \"$c\" | grep -i -o -E \"(Co-authored-by|Signed-off-by|Claude-Session):|Generated (with|by) \\\\[?Claude|claude\\\\.ai/code/session_|noreply@anthropic\\\\.com\" | head -1); [ -n \"$hit\" ] || exit 0; jq -n --arg h \"$hit\" \"{hookSpecificOutput:{hookEventName:\\\"PreToolUse\\\",permissionDecision:\\\"deny\\\",permissionDecisionReason:(\\\"Atribución en el mensaje (\\\" + \\$h + \\\"): este repo no lleva trailers de atribución ni enlaces de sesión en commits, tags, PR ni issues — norma .claude/rules/git.md (D37, D64). Quítalo y repite.\\\")}}\"; }",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "permissions": {

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -11,9 +12,14 @@ jobs:
       TZ: UTC
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
           enable-cache: true
       - run: make setup
       - run: make ci
+        env:
+          ATTRIB_BASE: origin/${{ github.base_ref || 'main' }}
+          PR_BODY: ${{ github.event.pull_request.body }}
