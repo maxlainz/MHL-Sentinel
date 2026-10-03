@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.6.1] - 2026-10-03 — Accept con MHL 1.x de origen y cobertura al 100 %
 ### Añadido
 - Tests para todo el código: cobertura al 100 % de líneas y ramas (de 90 %), 435 tests (de 225). `make test` falla por debajo del 100 % (D66); `pytest-cov` en el grupo dev.
 - `make attribution-check` en `make ci` y en la CI de cada PR (también al editar su descripción): falla si un commit o la descripción llevan trailers de atribución o enlaces de sesión (D64). Hook `PreToolUse` equivalente para los agentes.
