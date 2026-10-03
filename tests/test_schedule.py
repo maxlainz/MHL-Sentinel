@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -106,3 +106,32 @@ def test_never_working_raises() -> None:
     assert not w.is_working(datetime(2026, 10, 5, 10, 0, tzinfo=MAD))
     with pytest.raises(ValueError):
         w.next_change(datetime(2026, 10, 5, 10, 0, tzinfo=MAD))
+
+
+def test_equal_start_and_end_is_never_working() -> None:
+    w = WorkingHours(
+        days=frozenset(range(7)), start=time(9), end=time(9), tz=ZoneInfo("Europe/Madrid")
+    )
+    assert not w.crosses_midnight
+    assert not w.is_working(datetime(2026, 10, 5, 9, 0, tzinfo=MAD))
+    assert not w.is_working(datetime(2026, 10, 5, 15, 0, tzinfo=MAD))
+
+
+def test_never_working_late_in_the_day_exhausts_the_candidates() -> None:
+    # Late in the day every candidate falls inside the horizon: the loop ends without a flip.
+    w = wh([], "09:00", "19:00")
+    with pytest.raises(ValueError, match="never change"):
+        w.next_change(datetime(2026, 10, 5, 23, 59, tzinfo=MAD))
+
+
+def test_first_flip_stops_when_the_midpoint_cannot_advance() -> None:
+    w = wh(["mon"], "09:00", "19:00", tz="UTC")
+    lo = datetime(2026, 10, 5, 8, 0, 0, tzinfo=UTC)
+    hi = lo + timedelta(seconds=1, microseconds=1)
+    # mid truncates back to ``lo`` (sub-second): the search gives up and returns ``hi``.
+    assert w._first_flip(lo, hi, True) == hi
+    # A regular bisection narrows to the first second that differs.
+    start = datetime(2026, 10, 5, 8, 59, 0, tzinfo=UTC)
+    assert w._first_flip(start, start + timedelta(seconds=120), False) == datetime(
+        2026, 10, 5, 9, 0, 0, tzinfo=UTC
+    )

@@ -80,3 +80,29 @@ def test_stray_entries(archive: Path) -> None:
         assert find_stray_entries(archive, 0) == []  # .DS_Store ignored by prefix
     finally:
         stray.unlink()
+
+
+def test_unreadable_or_missing_root_yields_nothing(tmp_path: Path) -> None:
+    missing = tmp_path / "gone"
+    assert discover_projects(missing, 0) == []
+    assert discover_projects(missing, 2) == []
+    assert find_stray_entries(missing, 1) == []
+
+
+def test_stray_negative_depth_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        find_stray_entries(tmp_path, -1)
+
+
+def test_symlinks_are_strays_and_reserved_names_are_skipped(tmp_path: Path) -> None:
+    (tmp_path / "2024-01_CLIENTE-CAMPANA").mkdir()
+    (tmp_path / "ascmhl").mkdir()
+    (tmp_path / "ascmhl_superseded").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "2024-01_CLIENTE-CAMPANA", target_is_directory=True)
+    assert [c.rel_path for c in discover_projects(tmp_path, 0)] == ["2024-01_CLIENTE-CAMPANA"]
+    assert find_stray_entries(tmp_path, 0) == ["link"]
+
+
+def test_stray_search_stops_when_no_directories_remain(tmp_path: Path) -> None:
+    (tmp_path / "notes.txt").write_text("x")
+    assert find_stray_entries(tmp_path, 3) == ["notes.txt"]

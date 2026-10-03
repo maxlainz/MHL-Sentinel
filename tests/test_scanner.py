@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -129,3 +131,68 @@ def test_is_settled() -> None:
     assert not is_settled(d, 100 * HOUR_NS + 168 * HOUR_NS - 1, 168)
     unstable = diff_against_sealed(files, {}, None)
     assert not is_settled(unstable, 10**30, 168)
+
+
+class _FakeEntry:
+    def __init__(self, name: str, *, stat_error: bool = False) -> None:
+        self.name = name
+        self.path = f"/fake/{name}"
+        self._stat_error = stat_error
+
+    def is_symlink(self) -> bool:
+        return False
+
+    def is_dir(self, follow_symlinks: bool = True) -> bool:
+        return False
+
+    def is_file(self, follow_symlinks: bool = True) -> bool:
+        return True
+
+    def stat(self, follow_symlinks: bool = True) -> SimpleNamespace:
+        if self._stat_error:
+            raise PermissionError(13, "Permission denied")
+        return SimpleNamespace(st_size=7, st_mtime_ns=5)
+
+
+class _FakeScandir:
+    def __init__(self, entries: list[_FakeEntry]) -> None:
+        self._entries = entries
+
+    def __enter__(self) -> _FakeScandir:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def __iter__(self) -> Iterator[_FakeEntry]:
+        return iter(self._entries)
+
+
+def test_scan_unreadable_directory_is_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny(path: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "scandir", deny)
+    out = scan_project(tmp_path, [], [])
+    assert out.files == []
+    assert out.errors == [".: Permission denied"]
+
+
+def test_scan_entry_stat_failure_is_collected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entries = [_FakeEntry("good.mov"), _FakeEntry("bad.mov", stat_error=True)]
+    monkeypatch.setattr(os, "scandir", lambda path: _FakeScandir(entries))
+    out = scan_project(tmp_path, [], [])
+    assert [(f.rel_path, f.size, f.mtime_ns) for f in out.files] == [("good.mov", 7, 5)]
+    assert out.errors == ["bad.mov: Permission denied"]
+
+
+def test_scan_ignores_special_files(tmp_path: Path) -> None:
+    (tmp_path / "keep.mov").write_text("x")
+    os.mkfifo(tmp_path / "pipe")
+    out = scan_project(tmp_path, [], [])
+    assert [f.rel_path for f in out.files] == ["keep.mov"]
+    assert out.errors == []

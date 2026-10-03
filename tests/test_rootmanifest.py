@@ -234,3 +234,37 @@ def test_prefix_in_the_archive_path_is_not_used(tmp_path: Path) -> None:
     settings = Settings(archive_root=tmp_path / "_share" / "archive", config_dir=tmp_path / "c")
     assert "_*" not in rootmanifest.prefix_patterns(settings)
     assert "@*" in rootmanifest.prefix_patterns(settings)
+
+
+def test_root_ignore_patterns_have_no_duplicates(tmp_path: Path) -> None:
+    settings = Settings(
+        archive_root=tmp_path / "archive",
+        config_dir=tmp_path / "c",
+        exclude_globs=[".DS_Store", "*.md", "*.md"],
+    )
+    patterns = rootmanifest.root_ignore_patterns(settings)
+    assert len(patterns) == len(set(patterns))
+    assert patterns.count(".DS_Store") == 1 and patterns.count("*.md") == 1
+
+
+def test_missing_root_history_makes_a_refresh_needed(
+    archive: tuple[Settings, Database],
+) -> None:
+    settings, db = archive
+    assert rootmanifest.refresh_root_manifest(db, settings, now=utcnow()) is not None
+    assert not rootmanifest.root_manifest_needed(db, settings)
+    shutil.rmtree(settings.archive_root / "ascmhl")
+    assert rootmanifest.root_manifest_needed(db, settings)
+
+
+def test_dangling_references_skips_a_chain_entry_whose_file_is_gone(
+    archive: tuple[Settings, Database],
+) -> None:
+    settings, db = archive
+    root = settings.archive_root
+    assert rootmanifest.dangling_references(root) == []  # no root history yet
+    assert rootmanifest.refresh_root_manifest(db, settings, now=utcnow()) is not None
+    assert rootmanifest.dangling_references(root) == []  # intact
+    for manifest in root_manifests(root):
+        manifest.unlink()
+    assert rootmanifest.dangling_references(root) == []  # the reference reports that itself
