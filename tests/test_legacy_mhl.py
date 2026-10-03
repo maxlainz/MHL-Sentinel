@@ -6,7 +6,9 @@ import hashlib
 import importlib.util
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
 
+import pytest
 import xxhash
 
 from mhl_sentinel.legacy_mhl import (
@@ -105,3 +107,69 @@ def test_conflicts_keep_first_with_warning(tmp_path: Path) -> None:
     merged, warnings = expected_hashes_with_warnings(root)
     assert merged == {"f": {"md5": "11" * 16}}
     assert any("conflicting" in w for w in warnings)
+
+
+def write_hashlist(path: Path, body: str, version: str = "1.1") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'<?xml version="1.0"?><hashlist version="{version}">{body}</hashlist>')
+
+
+def test_find_skips_unreadable_and_foreign_manifests(tmp_path: Path) -> None:
+    write_hashlist(tmp_path / "ok.mhl", "")
+    (tmp_path / "broken.mhl").write_text("<hashlist")
+    write_hashlist(tmp_path / "v2.mhl", "", version="2.0")
+    (tmp_path / "other.mhl").write_text("<manifest version='1.1'/>")
+    (tmp_path / "notes.txt").write_text("<hashlist version='1.1'/>")
+    write_hashlist(tmp_path / "ascmhl" / "inside.mhl", "")
+    assert [p.name for p in find_legacy_manifests(tmp_path)] == ["ok.mhl"]
+
+
+def test_root_info_without_any_element_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_hashlist(tmp_path / "a.mhl", "")
+    monkeypatch.setattr(ElementTree, "iterparse", lambda *_a, **_k: iter(()))
+    assert find_legacy_manifests(tmp_path) == []
+
+
+def test_unreadable_manifest_warns_and_has_no_entries(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.mhl"
+    bad.write_text("<hashlist")
+    m = read_legacy_manifest(bad, tmp_path)
+    assert m.entries == {}
+    assert len(m.warnings) == 1 and m.warnings[0].startswith("bad.mhl: unreadable")
+
+
+def test_entries_without_file_or_valid_hashes(tmp_path: Path) -> None:
+    path = tmp_path / "sub" / "x.mhl"
+    write_hashlist(
+        path,
+        "<hash><md5>d41d8cd98f00b204e9800998ecf8427e</md5></hash>"
+        "<hash><file>a.mov</file><xxhash64>zz</xxhash64></hash>"
+        "<hash><file>b.mov</file><xxhash64>0123456789abcdef</xxhash64>"
+        "<xxhash64be>0123456789ABCDEF</xxhash64be><sha512>ab</sha512><size>12</size></hash>"
+        "<hash><file>c.mov</file><size>x</size><md5>d41d8cd98f00b204e9800998ecf8427e</md5></hash>"
+        "<hash><file>d.mov</file><xxhash>12345</xxhash></hash>",
+    )
+    m = read_legacy_manifest(path, tmp_path)
+    assert "x.mhl: <hash> without <file>" in m.warnings
+    assert "x.mhl: sub/a.mov: invalid xxhash64 value" in m.warnings
+    assert any("sub/d.mov: XXH32" in w for w in m.warnings)
+    assert not any("sha512" in w for w in m.warnings)  # unknown formats are skipped silently
+    assert sorted(m.entries) == ["sub/b.mov", "sub/c.mov"]
+    # xxhash64 is little-endian (reversed); xxhash64be is canonical; the first one wins.
+    assert m.entries["sub/b.mov"].hashes == {"xxh64": "efcdab8967452301"}
+    assert m.entries["sub/b.mov"].size == 12
+    assert m.entries["sub/c.mov"].size is None
+
+
+def test_duplicate_entry_in_one_manifest_conflict_and_merge(tmp_path: Path) -> None:
+    path = tmp_path / "x.mhl"
+    write_hashlist(
+        path,
+        "<hash><file>a.mov</file><md5>aa</md5></hash>"
+        "<hash><file>./a.mov</file><md5>bb</md5><sha1>cc</sha1></hash>",
+    )
+    m = read_legacy_manifest(path, tmp_path)
+    assert m.entries["a.mov"].hashes == {"md5": "aa", "sha1": "cc"}
+    assert m.warnings == ["x.mhl: a.mov: conflicting md5, kept first"]
