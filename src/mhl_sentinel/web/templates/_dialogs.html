@@ -1,22 +1,22 @@
 {# Native <dialog>s (D60, D63). The page works without JS: <noscript> shows plain forms. #}
 {% macro retire(id, name, target, query="") -%}
-<button type="button" class="btn small quiet" data-dialog-open="retire-{{ id }}">Retire</button>
+<button type="button" class="btn small quiet" data-dialog-open="retire-{{ id }}">Forget permanently</button>
 <dialog id="retire-{{ id }}" class="confirm" aria-labelledby="retire-title-{{ id }}">
   <form method="post" action="/projects/{{ id }}/retire{{ query }}"
         hx-post="/projects/{{ id }}/retire{{ query }}" hx-target="{{ target }}" hx-swap="outerHTML">
-    <h2 id="retire-title-{{ id }}">Retire {{ name }}?</h2>
+    <h2 id="retire-title-{{ id }}">Forget {{ name }} permanently?</h2>
     <p>This deletes the app's record and the saved MHL history of {{ name }}.
       The archive folder itself is not touched.</p>
     <div class="dialog-acts">
-      <button type="submit" class="btn small decide">Retire</button>
+      <button type="submit" class="btn small decide">Forget permanently</button>
       <button type="button" class="btn small quiet" data-download-url="/projects/{{ id }}/history.zip"
-              data-download-name="{{ name }}-ascmhl.zip">Retire and download MHL</button>
+              data-download-name="{{ name }}-ascmhl.zip">Forget and download MHL</button>
       <button type="button" class="btn small ghost" data-dialog-close>Cancel</button>
     </div>
   </form>
 </dialog>
 <noscript><a class="btn small quiet" href="/projects/{{ id }}/history.zip" download>Download MHL</a>
-<form class="inline" method="post" action="/projects/{{ id }}/retire{{ query }}"><button type="submit" class="btn small quiet">Retire (no undo)</button></form></noscript>
+<form class="inline" method="post" action="/projects/{{ id }}/retire{{ query }}"><button type="submit" class="btn small quiet">Forget permanently (no undo)</button></form></noscript>
 {%- endmacro %}
 
 {% macro verify_now(id, size, target, query="") -%}

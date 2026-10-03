@@ -250,7 +250,7 @@ def index(request: Request) -> Response:
         **activity_context(ctx),
         **header_context(ctx),
         **projects_context(ctx),
-        "notice": f"{retired} retired" if retired else "",
+        "notice": f"{retired} forgotten" if retired else "",
         "strays": strays[:MAX_STRAYS_SHOWN],
         "strays_more": max(0, len(strays) - MAX_STRAYS_SHOWN),
     }
@@ -368,7 +368,7 @@ def project_retire(request: Request, project_id: int) -> Response:
         return _action_response(
             request, ctx, project_id, notice="", error=str(exc), status_code=409
         )
-    return _action_response(request, ctx, project_id, notice=f"{name} retired", retired=name)
+    return _action_response(request, ctx, project_id, notice=f"{name} forgotten", retired=name)
 
 
 @router.post("/projects/{project_id}/retry", response_class=HTMLResponse)

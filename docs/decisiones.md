@@ -363,6 +363,17 @@ Sealing
 - **Elección**: del owner, (3). Cobertura al 100 % de líneas y ramas de `src/`, sin `# pragma: no cover`, y `fail_under = 100` en `pyproject.toml`: `make test` (y con él `make ci` y la CI) falla si un camino nuevo llega sin su test. Las ramas de error se alcanzan con `monkeypatch` del colaborador que falla; los fallos de permisos con un `os.scandir` falso, porque la CI corre como root.
 - 2026-10-03.
 
+## D67 — Una carpeta sin ficheros es un proyecto borrado
+- **Contexto**: el owner borra un proyecto del NAS; desde el Mac la carpeta ya no aparece, pero el contenedor la sigue viendo con su `ascmhl/` (el NAS no lo eliminó, probablemente por permisos). Para la app era un proyecto sellado al que le habían borrado todos los ficheros: revisión; `Accept as new version` intentaba apartar `ascmhl/`, fallaba con `PermissionError`, el proyecto pasaba a `error` («retried on the next round») y la ronda siguiente lo devolvía a revisión: un bucle sin salida.
+- **Opciones**: (1) tratarla como borrada (`missing`, D58) e ignorarla mientras siga vacía; (2) lo mismo y además intentar borrar del NAS la carpeta vacía al dar de baja; (3) seguir en revisión con un botón «olvidar» en lugar de Accept.
+- **Elección**: del owner, (1). Un proyecto son sus ficheros: una carpeta cuyo recorrido no encuentra ninguno (los ignorados por defecto, como `.DS_Store`, `ascmhl/` y `ascmhl_superseded/`, no cuentan; un error de lectura sí cuenta como «tiene ficheros») es la carpeta desaparecida de D58: `missing` desde la primera ronda, tarjeta con `Retry` y `Forget permanently`. Una carpeta vacía que no sigue la app (nueva, o de un proyecto ya olvidado) no es un proyecto nuevo, y una `missing` vacía no «vuelve», hasta que tenga ficheros. Un trabajo que arranca y encuentra la carpeta vacía acaba `cancelled` y deja el proyecto `missing`. `Retry` comprueba también que haya ficheros. La app no toca la carpeta del NAS.
+- 2026-10-03 (`AskUserQuestion`).
+
+## D68 — `Retire` pasa a llamarse `Forget permanently`
+- **Contexto**: el owner, ante el bucle de D67: lo que necesitaba era «olvidar permanentemente».
+- **Elección**: del owner. Solo cambian los textos de la GUI: `Forget permanently`, `Forget and download MHL`, «Forgot X» en el log, «X forgotten» al confirmar. Rutas, nombres internos y trabajo `retire` no cambian (las líneas de log antiguas se siguen leyendo). D60 sigue en vigor con el nombre nuevo.
+- 2026-10-03.
+
 ---
 
 ## Pendiente de entrevista

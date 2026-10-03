@@ -675,3 +675,89 @@ def test_mirror_set_aside_when_accept_could_not_move_it(
     on_disk = sorted(p.name for p in (settings.archive_root / A / "ascmhl").iterdir())
     assert sorted(p.name for p in mirror.iterdir()) == on_disk
     assert (mirror.parent / history_mirror.SUPERSEDED_DIR).is_dir()
+
+
+# --- D67: a folder left without files is a deleted project -------------------------------------
+
+
+def test_emptied_folder_is_missing_and_once_forgotten_stays_out(
+    archive: tuple[Settings, Database],
+) -> None:
+    """The NAS may leave ``ascmhl/`` behind (permissions) when a project is deleted: the folder
+    with only its history is the project gone, never a review whose Accept cannot progress."""
+    settings, db = archive
+    folder = settings.archive_root / A
+    shutil.rmtree(folder / "01_MASTERS")
+    (folder / ".DS_Store").write_bytes(b"x")  # ignored: not a file of the project
+    assert (folder / "ascmhl").is_dir()
+
+    summary = sealer.run_scan_cycle(db, settings, now=utcnow())
+    assert summary.missing == [A] and summary.states[A] is ProjectState.MISSING
+    gone = db.get_project(A)
+    assert gone is not None and gone.state is ProjectState.MISSING
+    assert gone.state_before_missing is ProjectState.SEALED and gone.review_reason is None
+    assert not db.get_review_items(gone.id)
+    assert sealer.request_retry(db, settings, gone.id, utcnow()) is False  # still empty
+
+    again = sealer.run_scan_cycle(db, settings, now=utcnow())  # stays missing, not "back"
+    assert again.reappeared == [] and again.missing == [A] and again.discovered == 1
+
+    sealer.request_retire(db, settings, gone.id, utcnow())
+    after = sealer.run_scan_cycle(db, settings, now=utcnow())
+    assert db.get_project(A) is None and after.new_projects == [] and after.discovered == 1
+
+    (folder / "01_MASTERS").mkdir()
+    (folder / "01_MASTERS" / "m.mov").write_bytes(b"back")
+    back = sealer.run_scan_cycle(db, settings, now=utcnow())
+    assert back.new_projects == [A]
+
+
+def test_retry_finds_files_back_in_an_emptied_folder(archive: tuple[Settings, Database]) -> None:
+    settings, db = archive
+    folder = settings.archive_root / A
+    shutil.move(folder / "01_MASTERS", folder.parent / "_away")
+    sealer.run_scan_cycle(db, settings, now=utcnow())
+    a = db.get_project(A)
+    assert a is not None and a.state is ProjectState.MISSING
+    shutil.move(folder.parent / "_away", folder / "01_MASTERS")
+    assert sealer.request_retry(db, settings, a.id, utcnow()) is True
+    back = db.get_project(A)
+    assert back is not None and back.state is ProjectState.SEALED
+
+
+def test_an_empty_new_folder_is_not_a_project_until_it_has_files(
+    archive: tuple[Settings, Database],
+) -> None:
+    settings, db = archive
+    new = settings.archive_root / "2025" / "2025-03_CLIENTE-NUEVA"
+    (new / "01_MASTERS").mkdir(parents=True)
+    summary = sealer.run_scan_cycle(db, settings, now=utcnow())
+    assert db.get_project(new.relative_to(settings.archive_root).as_posix()) is None
+    assert summary.new_projects == []
+
+
+@pytest.mark.parametrize("already_missing", [False, True])
+def test_a_job_that_finds_the_folder_empty_marks_it_missing(
+    archive: tuple[Settings, Database], monkeypatch: pytest.MonkeyPatch, already_missing: bool
+) -> None:
+    """Accept (or any job) on a folder emptied since the last round: no PermissionError loop,
+    no ``error`` retried every round; the job ends cancelled and the project is ``missing``."""
+    settings, db = archive
+    b = db.get_project(B)
+    assert b is not None
+    job_id = sealer.request_seal(db, b.id, utcnow())
+    shutil.rmtree(settings.archive_root / B / "01_MASTERS")
+    if already_missing:  # the scan cycle took it while the job started
+        real = sealer._scan_for_job
+
+        def scan_then_missing(ctx: object, patterns: list[str]) -> object:
+            sealer._mark_missing(db, b, utcnow())
+            return real(ctx, patterns)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(sealer, "_scan_for_job", scan_then_missing)
+    run_all_jobs(db, settings)
+    job = db.get_job(job_id)
+    assert job is not None and job.state is JobState.CANCELLED and job.error is None
+    after = db.get_project(b.id)
+    assert after is not None and after.state is ProjectState.MISSING
+    assert after.state_before_missing is ProjectState.UNSEALED and after.error is None

@@ -48,7 +48,7 @@
         if (form && form.requestSubmit) form.requestSubmit();
       }).catch(function () {
         dl.disabled = false;
-        window.alert("The MHL history could not be downloaded, so the project was not retired.");
+        window.alert("The MHL history could not be downloaded, so the project was not forgotten.");
       });
     }
   });
