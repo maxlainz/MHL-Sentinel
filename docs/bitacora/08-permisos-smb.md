@@ -9,4 +9,7 @@
 - `tests/test_permissions.py`: con umask 0, dos generaciones de proyecto, raíz, huérfano apartado y `ascmhl_superseded/` quedan 777/666; y los defaults de imagen, entrypoint y compose.
 
 ## Siguiente paso
-Release patch (`v0.6.3`) para que Watchtower lo suba al NAS; en el NAS, abrir permisos una vez de las `ascmhl/` creadas antes con 022 (ver mensaje de la sesión). Lo de bitácora 07 sigue en pie.
+Publicado como `v0.6.3`: Watchtower lo sube al NAS; en el NAS, abrir permisos una vez de las `ascmhl/` creadas antes con 022 (ver mensaje de la sesión). Lo de bitácora 07 sigue en pie.
+
+## Vault
+Ampliada la nota `Permisos de carpeta compartida en QNAP (share, ACL y POSIX)`: borrar exige escritura en la carpeta, umask y modos explícitos que se la saltan, convención `PUID`/`PGID`/`UMASK` de los contenedores de NAS.
