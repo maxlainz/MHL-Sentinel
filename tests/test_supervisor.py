@@ -602,3 +602,341 @@ def test_a_paused_job_yields_to_verify_now_and_to_a_vanished_folder(tmp_path: Pa
         again = db.get_job(seal_id)
         assert again is not None and again.state is JobState.QUEUED
         assert not (archive / first.rel_path / "ascmhl").exists()
+
+
+# -- error branches and lifecycle edges (unit level, no hasher thread unless stated) ----------
+
+
+def quiet_supervisor(
+    tmp_path: Path, db: Database, **kw: Any
+) -> tuple[Supervisor, EventBus, Settings]:
+    archive = tmp_path / "archive"
+    archive.mkdir(exist_ok=True)
+    settings = make_settings(tmp_path, archive)
+    bus = EventBus(db)
+    sup = Supervisor(db, SettingsRef(settings), bus, tick_seconds=0.05, idle_seconds=0.01, **kw)
+    return sup, bus, settings
+
+
+def test_start_twice_is_a_noop(tmp_path: Path) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db)
+            await sup.start()
+            try:
+                task, hasher = sup._task, sup._hasher
+                await sup.start()
+                assert sup._task is task and sup._hasher is hasher
+                assert sup.running
+            finally:
+                await sup.stop()
+
+    run(body)
+
+
+def test_request_stop_sets_the_flag_now_and_closes_the_gate_on_the_loop(tmp_path: Path) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db)
+            await sup.start()
+            try:
+                assert sup.gate.is_set()
+                sup.request_stop()
+                assert sup.stop_event.is_set()  # signal-safe part is immediate
+                await until(lambda: not sup.gate.is_set(), timeout=5)
+                sup._wake.clear()
+                assert sup._loop_wakeup is not None
+                sup._loop_wakeup.clear()
+                sup._begin_stop()
+                assert not sup.gate.is_set()
+                assert sup._wake.is_set() and sup._loop_wakeup.is_set()
+            finally:
+                await sup.stop()
+
+    run(body)
+
+
+def test_request_stop_without_a_usable_loop(tmp_path: Path) -> None:
+    with Database(tmp_path / "state.db") as db:
+        sup, _, _ = quiet_supervisor(tmp_path, db)
+        sup.request_stop()  # never started: no loop
+        assert sup.stop_event.is_set()
+        sup.stop_event.clear()
+        loop = asyncio.new_event_loop()
+        loop.close()
+        sup._loop = loop
+        sup.request_stop()  # closed loop: nothing scheduled, no error
+        assert sup.stop_event.is_set() and sup.gate.is_set() is False
+
+
+def test_stop_on_a_supervisor_that_never_started(tmp_path: Path) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db)
+            await sup.stop()
+            assert sup.stop_event.is_set() and not sup.gate.is_set() and not sup.running
+
+    run(body)
+
+
+def test_stop_reports_a_hasher_that_does_not_finish(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db, stop_timeout=0.05)
+            release = threading.Event()
+            stuck = threading.Thread(target=release.wait, daemon=True)
+            stuck.start()
+            sup._hasher = stuck
+            try:
+                await sup.stop()
+                assert stuck.is_alive()
+            finally:
+                release.set()
+                stuck.join(5)
+            assert "did not stop" in caplog.text
+
+    run(body)
+
+
+def test_scan_request_before_start_is_remembered_without_a_loop(tmp_path: Path) -> None:
+    with Database(tmp_path / "state.db") as db:
+        sup, _, _ = quiet_supervisor(tmp_path, db)
+        sup.request_scan_now()
+        assert sup._scan_requested.is_set()
+        assert sup.status().scan_requested
+
+
+def test_tick_lets_cancellation_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db)
+
+            async def cancelled() -> None:
+                raise asyncio.CancelledError
+
+            monkeypatch.setattr(sup, "_tick", cancelled)
+            with pytest.raises(asyncio.CancelledError):
+                await sup.tick()
+
+    run(body)
+
+
+def test_loop_main_returns_at_once_when_already_stopped(tmp_path: Path) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, _, _ = quiet_supervisor(tmp_path, db)
+            sup._loop_wakeup = asyncio.Event()
+            sup.stop_event.set()
+            await asyncio.wait_for(sup._loop_main(), 1)
+
+    run(body)
+
+
+def test_gate_follows_working_hours_and_stop(tmp_path: Path) -> None:
+    with Database(tmp_path / "state.db") as db:
+        archive = tmp_path / "archive"
+        archive.mkdir()
+        working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+        settings = make_settings(tmp_path, archive, working_hours=working)
+        sup = Supervisor(db, SettingsRef(settings), EventBus(db), now_fn=lambda: NOON)
+        sup.gate.set()
+        assert sup._update_gate() is True  # inside working hours: pause
+        assert not sup.gate.is_set() and sup._working_now
+        sup.stop_event.set()
+        sup.gate.set()
+        sup._update_gate()  # stopping wins over everything
+        assert not sup.gate.is_set()
+
+
+def test_a_hanging_archive_probe_counts_as_unreachable(tmp_path: Path) -> None:
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, bus, _ = quiet_supervisor(tmp_path, db)
+            q = bus.subscribe()
+            release = threading.Event()
+            hanging = threading.Thread(target=release.wait, daemon=True)
+            hanging.start()
+            sup._archive_check = hanging  # the previous listdir has not returned
+            try:
+                assert await sup._check_archive() is False
+            finally:
+                release.set()
+                hanging.join(5)
+            await asyncio.sleep(0)
+            assert [e.kind for e in drain(q)] == ["archive.unreachable"]
+            assert sup._archive_reachable is False
+
+    run(body)
+
+
+def test_archive_vanishing_during_the_scan_is_reported_not_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def gone(*args: Any, **kwargs: Any) -> sealer.ScanSummary:
+        raise sealer.ArchiveUnavailableError("archive root vanished")
+
+    monkeypatch.setattr(sealer, "run_scan_cycle", gone)
+
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, bus, _ = quiet_supervisor(tmp_path, db)
+            q = bus.subscribe()
+            sup._fs_recovered.set()
+            await sup.tick()
+            await asyncio.sleep(0)
+            events = drain(q)
+            assert sup._archive_reachable is False and sup.status().last_cycle_at is None
+            assert [e.kind for e in events].count("archive.unreachable") == 1
+            assert any(
+                e.kind == "log" and e.payload["msg"] == "archive root vanished" for e in events
+            )
+            finished = [e for e in events if e.kind == "cycle.finished"]
+            assert finished[0].payload["error"] == "archive root vanished"
+            assert finished[0].payload["last_cycle_at"] is None
+
+    run(body)
+
+
+def test_cycle_summary_is_logged_and_published(tmp_path: Path) -> None:
+    summary = sealer.ScanSummary(
+        discovered=3,
+        scanned=2,
+        missing=["A/2024-01_CLIENTE-X"],
+        reappeared=["B/2024-02_CLIENTE-Y"],
+        moved=[("C/old", "C/new")],
+        orphans=["D/ascmhl/0002_x.mhl.orphan"],
+        errors=["E: Permission denied"],
+        enqueued=[("F", JobKind.SEAL)],
+    )
+
+    async def body() -> None:
+        with Database(tmp_path / "state.db") as db:
+            sup, bus, _ = quiet_supervisor(tmp_path, db)
+            q = bus.subscribe()
+            sup._fs_recovered.set()
+            maintenance = [("G", JobKind.VERIFY), ("", JobKind.ROOT_MANIFEST)]
+            sup._scan_and_schedule = lambda *a: (summary, maintenance)  # type: ignore[method-assign]
+            await sup.tick()
+            await asyncio.sleep(0)
+            events = drain(q)
+            msgs = [e.payload["msg"] for e in events if e.kind == "log"]
+            assert msgs == [
+                "E: Permission denied",
+                "orphan manifest set aside: D/ascmhl/0002_x.mhl.orphan",
+                "project moved: C/old → C/new",
+                "project back on disk: B/2024-02_CLIENTE-Y",
+            ]
+            payload = next(e for e in events if e.kind == "cycle.finished").payload
+            assert payload["scan"] is True and payload["archive"] is True
+            assert (payload["discovered"], payload["scanned"], payload["missing"]) == (3, 2, 1)
+            assert (payload["moved"], payload["reappeared"], payload["errors"]) == (1, 1, 1)
+            assert payload["enqueued"] == 1 and payload["verify_enqueued"] == 1
+            assert payload["root_enqueued"] is True
+            assert sup.status().last_cycle_at is not None
+            assert sup._wake.is_set()  # new jobs wake the hasher
+
+    run(body)
+
+
+def test_startup_recovery_reports_what_it_cleaned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = sealer.FsRecovery(
+        temp_files=["a/ascmhl/.x.tmp"],
+        orphans=["b/ascmhl/0001_y.mhl.orphan"],
+        errors=["c: boom"],
+    )
+    monkeypatch.setattr(sealer, "recover_history_dirs", lambda db, settings: fake)
+    with Database(tmp_path / "state.db") as db:
+        sup, _, settings = quiet_supervisor(tmp_path, db)
+        logged: list[tuple[str, str]] = []
+        monkeypatch.setattr(sup, "_publish_log", lambda level, msg: logged.append((level, msg)))
+        assert not sup._fs_recovered.is_set()
+        sup._recover_history_dirs(settings)
+        assert logged == [
+            ("warning", "stale temp file removed: a/ascmhl/.x.tmp"),
+            ("warning", "orphan manifest set aside: b/ascmhl/0001_y.mhl.orphan"),
+            ("warning", "c: boom"),
+        ]
+        assert sup._fs_recovered.is_set() and sup._wake.is_set()
+
+
+def test_no_maintenance_is_scheduled_once_stopping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with Database(tmp_path / "state.db") as db:
+        sup, _, settings = quiet_supervisor(tmp_path, db)
+
+        def scan(*args: Any, **kwargs: Any) -> sealer.ScanSummary:
+            sup.stop_event.set()  # SIGTERM arrived during the scan
+            return sealer.ScanSummary(discovered=1)
+
+        def forbidden(*args: Any, **kwargs: Any) -> list[tuple[str, JobKind]]:
+            raise AssertionError("maintenance must not be scheduled while stopping")
+
+        monkeypatch.setattr(sealer, "run_scan_cycle", scan)
+        monkeypatch.setattr(sealer, "schedule_maintenance", forbidden)
+        summary, maintenance = sup._scan_and_schedule(settings, NOON, False)
+        assert summary.discovered == 1 and maintenance == []
+
+
+def test_hasher_loop_survives_an_exception_in_a_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with Database(tmp_path / "state.db") as db:
+        sup, _, _ = quiet_supervisor(tmp_path, db)
+        logged: list[tuple[str, str]] = []
+        monkeypatch.setattr(sup, "_publish_log", lambda level, msg: logged.append((level, msg)))
+        calls = {"n": 0}
+
+        def step() -> bool:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ValueError("bad row")
+            sup.stop_event.set()
+            return True
+
+        monkeypatch.setattr(sup, "_hasher_step", step)
+        sup._hasher_main()  # returns once the second step asks to stop
+        assert calls["n"] == 2
+        assert logged == [("error", "hasher: ValueError: bad row")]
+
+
+def test_project_gone_check_ignores_a_job_that_already_finished(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    settings = make_settings(tmp_path, archive)
+    with Database(settings.db_path) as db:
+        sealer.run_scan_cycle(db, settings, now=utcnow())
+        project = db.list_projects()[0]
+        sup = Supervisor(db, SettingsRef(settings), EventBus(db))
+        sup._yield_if_project_gone()  # no job running: nothing to do
+        assert not sup._yield_event.is_set()
+
+        job_id = sealer.request_seal(db, project.id, utcnow())
+        job = db.get_job(job_id)
+        assert job is not None
+        sup._current_job, sup._current_rel_path = job, project.rel_path
+        db.update_project_fields(project.id, state=ProjectState.MISSING)
+        real_get_project = db.get_project
+
+        def finishing(key: int | str) -> Any:
+            row = real_get_project(key)
+            sup._current_job = None  # the job ended between the lookup and the lock
+            return row
+
+        monkeypatch.setattr(db, "get_project", finishing)
+        sup._yield_if_project_gone()
+        assert not sup._yield_event.is_set()
+
+
+def test_begin_stop_before_the_loop_exists(tmp_path: Path) -> None:
+    with Database(tmp_path / "state.db") as db:
+        sup, _, _ = quiet_supervisor(tmp_path, db)
+        sup.gate.set()
+        sup._begin_stop()  # no loop wakeup event yet: only gate and hasher wake
+        assert not sup.gate.is_set() and sup._wake.is_set()

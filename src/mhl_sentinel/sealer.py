@@ -1176,7 +1176,12 @@ def _run_seal(ctx: _Ctx, *, accept: bool) -> None:
     digests = _hash(ctx, files, expected)
     present = {f.rel_path: f for f in files}
     problems = _legacy_problems(ctx, expected, present, digests)
-    if problems:
+    if problems and accept:
+        # D65: Accept takes the folder as it is now. A file the legacy MHL 1.x lists and is gone
+        # is only a warning; a file that no longer matches keeps our xxh128 but does not
+        # inherit an origin hash that would be false.
+        digests = _accept_legacy_problems(ctx, problems, digests)
+    elif problems:
         reason = f"{len(problems)} files do not match their legacy MHL 1.x: " + _list_paths(
             i.rel_path for i in problems
         )
@@ -1213,6 +1218,33 @@ def _run_seal(ctx: _Ctx, *, accept: bool) -> None:
     _after_generation(ctx, manifest, sealed, files)
 
 
+def _accept_legacy_problems(
+    ctx: _Ctx, problems: list[ReviewItem], digests: Mapping[str, Mapping[str, str]]
+) -> dict[str, dict[str, str]]:
+    """D65: log what Accept overrides and drop the legacy formats of files that no longer
+    match, so the manifest never records an origin hash as ``verified`` when it failed."""
+    out = {rel: dict(hashes) for rel, hashes in digests.items()}
+    deleted = [i.rel_path for i in problems if i.change is ChangeKind.DELETED]
+    modified = [i.rel_path for i in problems if i.change is ChangeKind.MODIFIED]
+    if deleted:
+        ctx.log(
+            "warning",
+            f"accepted: {len(deleted)} files listed in a legacy MHL 1.x are gone: "
+            + _list_paths(deleted),
+        )
+    if modified:
+        ctx.log(
+            "warning",
+            f"accepted: {len(modified)} files no longer match their legacy MHL 1.x, sealed "
+            "without the origin hash: " + _list_paths(modified),
+        )
+        for rel in modified:
+            out[rel] = {
+                fmt: d for fmt, d in out[rel].items() if fmt not in _SUPPORTED_LEGACY_FORMATS
+            }
+    return out
+
+
 def _run_append(ctx: _Ctx) -> None:
     """D48: partial generation with only the files added since the last seal."""
     patterns = scan_ignore_patterns(ctx.root, ctx.settings)
@@ -1230,6 +1262,10 @@ def _run_append(ctx: _Ctx) -> None:
     expected = _legacy_expectations(ctx)
     digests = _hash(ctx, diff.added, expected)
     present = {f.rel_path: f for f in files}
+    # D65: only the new files answer to the legacy MHL 1.x; what was sealed already did (or
+    # was accepted without it), and files gone since the seal are caught by the diff above.
+    added = {f.rel_path for f in diff.added}
+    expected = {rel: h for rel, h in expected.items() if rel in added}
     problems = _legacy_problems(ctx, expected, present, digests)
     if problems:
         reason = f"{len(problems)} files do not match their legacy MHL 1.x: " + _list_paths(

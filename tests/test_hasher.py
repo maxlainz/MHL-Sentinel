@@ -202,3 +202,22 @@ def test_hash_project_retries_then_raises(tmp_path: Path) -> None:
     with pytest.raises(FileChanged):
         hash_project(tmp_path, files, lambda _p: ["md5"], cache, gate=gate, stop=threading.Event())
     assert gate.times == 1000 - 3  # exactly 3 attempts
+
+
+def test_wait_open_stops_when_the_gate_never_opens(tmp_path: Path) -> None:
+    from mhl_sentinel.hasher import _wait_open
+
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(Stopped):
+        _wait_open(threading.Event(), stop)  # closed gate + stop: abort, do not wait 1 s
+    gate = threading.Event()
+    gate.set()
+    _wait_open(gate, threading.Event())  # open gate returns at once
+
+
+def test_unsupported_format_is_rejected_before_reading(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="unsupported hash formats"):
+        hash_file(
+            tmp_path / "missing.bin", ["md5", "crc32"], gate=open_gate(), stop=threading.Event()
+        )

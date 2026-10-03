@@ -18,6 +18,7 @@ from mhl_sentinel.db import (
     NetworkFilesystemError,
     ReviewItem,
     SealedFile,
+    VerifyResult,
     is_network_fs,
 )
 from mhl_sentinel.models import ChangeKind, FileStat, JobKind, JobState, ProjectState, Trigger
@@ -390,3 +391,69 @@ def test_rename_and_delete_project_cascade(db: Database) -> None:
         assert n.fetchone()[0] == 0, table
     assert db.conn.execute("SELECT COUNT(*) FROM job_log").fetchone()[0] == 0
     assert db.get_files(other)  # the other project is untouched
+
+
+def test_mount_table_ignores_short_lines_and_shorter_later_mounts(tmp_path: Path) -> None:
+    mounts = tmp_path / "mounts"
+    mounts.write_text(
+        "garbage\n//nas/share /data cifs rw 0 0\n/dev/sda1 / ext4 rw 0 0\n", encoding="utf-8"
+    )
+    assert is_network_fs(Path("/data/x"), mounts)  # the later, shorter ``/`` does not shadow it
+
+
+def test_update_project_fields_conversions(db: Database) -> None:
+    pid = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    db.update_project_fields(pid)  # no fields: nothing to do
+    db.update_project_fields(pid, preexisting=False, error=Path("sub") / "dir", total_bytes=5)
+    p = db.get_project(pid)
+    assert p is not None
+    assert p.preexisting is False and p.error == "sub/dir" and p.total_bytes == 5
+
+
+def test_closed_database_refuses_queries_and_close_is_idempotent(tmp_path: Path) -> None:
+    database = Database(tmp_path / "state.db", mounts_file=tmp_path / "no-mounts").open()
+    database.close()
+    database.close()  # second close is a no-op
+    with pytest.raises(RuntimeError, match="not open"):
+        _ = database.conn
+
+
+def test_verify_results_without_any_job_are_empty(db: Database) -> None:
+    pid = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    assert db.get_verify_results(pid) == []
+
+
+def test_open_twice_is_a_noop(tmp_path: Path) -> None:
+    database = Database(tmp_path / "state.db", mounts_file=tmp_path / "no-mounts")
+    try:
+        first = database.open()
+        conn = first.conn
+        assert database.open() is first and database.conn is conn
+    finally:
+        database.close()
+
+
+def test_queued_and_running_job_of_a_project(db: Database) -> None:
+    pid = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    assert db.queued_job(pid) is None and db.running_job(pid) is None
+    low = db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 50, T0)
+    high = db.enqueue_job(JobKind.SEAL, pid, Trigger.MANUAL, 130, T0)
+    queued = db.queued_job(pid)
+    assert queued is not None and queued.id == high  # highest priority first
+    assert db.running_job(pid) is None
+    db.set_job_state(high, JobState.RUNNING, T0)
+    running = db.running_job(pid)
+    assert running is not None and running.id == high
+    queued = db.queued_job(pid)
+    assert queued is not None and queued.id == low
+
+
+def test_verify_results_default_to_the_latest_job(db: Database) -> None:
+    pid = db.upsert_project("A/2024-01_CLIENTE-CAMPANA", "2024-01_CLIENTE-CAMPANA", True, T0)
+    first = db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 50, T0)
+    db.set_job_state(first, JobState.DONE, T0)  # duplicate rule: one open verify per project
+    second = db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 50, T0 + timedelta(1))
+    db.replace_verify_results(first, pid, [VerifyResult("a.mov", "x", "x", "ok")])
+    db.replace_verify_results(second, pid, [VerifyResult("b.mov", "y", "z", "corrupt")])
+    assert db.get_verify_results(pid) == [VerifyResult("b.mov", "y", "z", "corrupt")]
+    assert db.get_verify_results(pid, first) == [VerifyResult("a.mov", "x", "x", "ok")]

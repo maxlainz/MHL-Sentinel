@@ -5,6 +5,7 @@
 - Actions corre en Linux (barato en GitHub Free): `ci.yml` en push a `main` y PRs; `release.yml` en tags `v*` construye la imagen multi-arch (amd64 + arm64) y la publica en GHCR.
 - **Toda release mueve el tag `latest` de la imagen** (además de `X.Y.Z` y `X.Y`): es lo que siguen Watchtower y las instalaciones del owner (D52). `release.yml` lo hace con `type=raw,value=latest`; no se quita nunca.
 - La app debe soportar que el contenedor se recree «a lo bruto» (SIGTERM corto y SIGKILL, `/config` persistente): test `tests/test_recreate.py` (D52).
+- Cobertura al 100 % de líneas y ramas (`fail_under = 100`, D66): un camino nuevo entra con su test en el mismo PR. Sin `# pragma: no cover`; si algo es de verdad inalcanzable, se borra o se pregunta al owner.
 - Nunca se taggea con CI rojo.
 
 **Por qué:** a diferencia de las apps macOS del owner, aquí no hay runners caros; la CI continua detecta regresiones de conformidad MHL antes de publicar imagen.

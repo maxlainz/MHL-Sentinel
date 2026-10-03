@@ -13,6 +13,7 @@ from mhl_sentinel.config import (
     YAML_FIELDS,
     Settings,
     WorkingHoursConfig,
+    _YamlSource,
     load_settings,
     save_yaml,
 )
@@ -127,3 +128,53 @@ def test_save_yaml_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     # save again → byte-identical (stable order)
     save_yaml(again, target)
     assert target.read_text(encoding="utf-8") == text
+
+
+def test_working_hours_days_are_normalised_and_deduplicated() -> None:
+    wh = WorkingHoursConfig.model_validate({"days": [" SUN ", "mon", "Mon", "sun"]})
+    assert wh.days == ["mon", "sun"]
+
+
+def test_empty_yaml_file_gives_defaults(tmp_path: Path) -> None:
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
+    assert load_settings(tmp_path).settle_hours == 168
+
+
+def test_yaml_top_level_must_be_a_mapping(tmp_path: Path) -> None:
+    (tmp_path / "config.yaml").write_text("- settle_hours\n- 24\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="top level must be a mapping"):
+        load_settings(tmp_path)
+
+
+def test_yaml_source_reads_field_from_mapping() -> None:
+    source = _YamlSource(Settings, {"settle_hours": 12})
+    assert source.get_field_value(None, "settle_hours") == (12, "settle_hours", False)
+    assert source.get_field_value(None, "theme") == (None, "theme", False)
+    assert source() == {"settle_hours": 12}
+
+
+def test_customise_sources_without_init_source_uses_no_yaml(tmp_path: Path) -> None:
+    """A foreign init source (not ``InitSettingsSource``) carries no YAML mapping."""
+    stand_in = _YamlSource(Settings, {"settle_hours": 1})
+    sources = Settings.settings_customise_sources(Settings, stand_in, stand_in, stand_in, stand_in)
+    assert len(sources) == 3
+    yaml_source = sources[2]
+    assert isinstance(yaml_source, _YamlSource)
+    assert yaml_source() == {}
+
+
+def test_log_level_is_case_insensitive_and_theme_validated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MHLS_LOG_LEVEL", "DEBUG")
+    assert Settings().log_level == "debug"
+    monkeypatch.setenv("MHLS_THEME", "sepia")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_config_file_and_tzinfo(tmp_path: Path) -> None:
+    s = Settings(config_dir=tmp_path, timezone=" Europe/Madrid ")
+    assert s.config_file == tmp_path / "config.yaml"
+    assert s.timezone == "Europe/Madrid"
+    assert s.tzinfo.key == "Europe/Madrid"

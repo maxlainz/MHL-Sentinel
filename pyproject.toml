@@ -31,6 +31,7 @@ dev = [
   "lxml-stubs>=0.5",
   "types-pyyaml>=6.0.12.20260906",
   "httpx>=0.28.1",
+  "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -64,3 +65,13 @@ filterwarnings = [
   "ignore:GitWildMatchPattern:DeprecationWarning",
   "ignore:Using `httpx` with `starlette.testclient` is deprecated",
 ]
+
+[tool.coverage.run]
+source = ["mhl_sentinel"]
+branch = true
+
+[tool.coverage.report]
+# D66: every line and branch of src/ runs in some test; a new path needs its test in the same PR.
+fail_under = 100
+show_missing = true
+skip_covered = true

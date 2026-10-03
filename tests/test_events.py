@@ -93,3 +93,21 @@ def test_job_id_also_writes_job_log(tmp_path: Path) -> None:
 def test_maxsize_must_be_positive() -> None:
     with pytest.raises(ValueError):
         EventBus(maxsize=0)
+
+
+def test_job_log_failure_does_not_break_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    with Database(tmp_path / "state.db") as db:
+        job = db.enqueue_job(JobKind.SEAL, None, Trigger.MANUAL, 130, utcnow())
+
+        def boom(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(db, "log", boom)
+        bus = EventBus(db)
+        with caplog.at_level("ERROR", logger="mhl_sentinel.events"):
+            event = bus.publish("job.started", {"id": job}, job_id=job)
+        assert event.kind == "job.started"
+        assert "could not write job_log" in caplog.text
+        assert db.get_job_log(job) == []

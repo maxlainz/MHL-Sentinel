@@ -16,8 +16,8 @@ format:       # ruff format (escribe)
 typecheck:    # mypy --strict (config en pyproject.toml)
 	@uv run mypy
 
-test:         # pytest (TZ=UTC: ascmhl escribe fechas con el offset actual, research spec §2.7)
-	@TZ=UTC uv run pytest
+test:         # pytest con cobertura al 100 % de líneas y ramas (D66; TZ=UTC: ascmhl escribe fechas con el offset actual, research spec §2.7)
+	@TZ=UTC uv run pytest --cov --cov-report=term
 
 leak-check:   # nada del estudio en el repo (norma repo-publico.md)
 	@sh scripts/leak-check.sh
