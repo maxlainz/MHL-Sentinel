@@ -32,8 +32,11 @@ services:
     ports:
       - "8080:8080"
     environment:
+      # Lo que la app crea en el archivo (ascmhl/) debe poder borrarse y moverse por SMB desde Mac y Windows
+      # (en macOS borrar exige escribir en la carpeta). El acceso lo controlan los permisos de share del NAS.
       PUID: "1000"                  # usuario del NAS con permiso de escritura en el archivo (id <usuario>)
-      PGID: "1000"
+      PGID: "100"                   # 100 = everyone en QNAP
+      UMASK: "000"                  # carpetas 777, ficheros 666
       MHLS_TIMEZONE: "Europe/Madrid"   # zona del horario laboral; el proceso corre en UTC
     volumes:
       - "/ruta/del/archivo:/archive"          # el archivo vigilado

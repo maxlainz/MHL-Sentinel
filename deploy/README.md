@@ -4,13 +4,13 @@ Imagen: `ghcr.io/maxlainz/mhl-sentinel` (amd64 y arm64), publicada por `release.
 
 ## Docker Compose (cualquier host)
 ```sh
-cp .env.example .env   # ajusta MHLS_ARCHIVE_HOST_PATH, MHLS_CONFIG_HOST_PATH, MHLS_TIMEZONE, PUID/PGID
+cp .env.example .env   # ajusta MHLS_ARCHIVE_HOST_PATH, MHLS_CONFIG_HOST_PATH, MHLS_TIMEZONE, PUID/PGID/UMASK
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
 ## QNAP Container Station (D32)
 1. Container Station → Crear → *Create Application* (Compose) y pega `deploy/docker-compose.yml` sustituyendo las variables por valores: la ruta del share de archivo (`/share/<volumen>/<carpeta>`) y una carpeta local para `/config` (por ejemplo `/share/Container/mhl-sentinel`).
-2. `PUID`/`PGID`: el usuario del NAS con permiso de escritura en el archivo (`id <usuario>` por SSH).
+2. `PUID`: el usuario del NAS con permiso de escritura en el archivo (`id <usuario>` por SSH). `PGID` `100` (everyone en QNAP) y `UMASK` `000` (D69): lo que la app crea en el archivo (`ascmhl/`, `ascmhl_superseded/`) queda con carpetas 777 y ficheros 666, así el equipo puede borrarlo o moverlo por SMB desde Mac (que exige escribir en la carpeta para borrar) y Windows. El control de acceso lo hacen los permisos de share de QTS, no los bits POSIX. El contenedor solo cambia dueño de `/config`; nunca toca permisos del archivo montado.
 3. `MHLS_TIMEZONE`: la zona del estudio (el horario laboral se evalúa en ella).
 4. Abre `http://<nas>:8080`. La GUI no lleva login (D35): no la expongas fuera de la LAN sin un proxy con autenticación.
 
