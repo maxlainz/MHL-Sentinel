@@ -357,6 +357,12 @@ Sealing
 - **Elección**: del owner, (1). Accept significa «acepto la carpeta como está ahora». Los ficheros intactos siguen heredando el hash de origen (`verified`); uno que ya no coincide nunca se anota como `verified` con un hash que falló. Lo aceptado queda como `warning` en el log del trabajo. `Append` solo contrasta con el MHL 1.x los ficheros nuevos (lo ya sellado respondió entonces, o se aceptó). Un `Seal` normal sigue bloqueando como en D39. Matiza D39.
 - 2026-10-03.
 
+## D66 — Cobertura de tests al 100 % (líneas y ramas) como parte de `make ci`
+- **Contexto**: tras el fallo de D65 el owner pide tests para todo lo que no los tenga. La cobertura era del 90 % (líneas y ramas) y 17 funciones no las ejecutaba ningún test (arranque y señales del servidor, app de emergencia, parada del supervisor, entre otras).
+- **Opciones**: (1) tests para esas 17 funciones y un umbral en `make ci`; (2) solo esas 17; (3) todo al ~100 % y umbral.
+- **Elección**: del owner, (3). Cobertura al 100 % de líneas y ramas de `src/`, sin `# pragma: no cover`, y `fail_under = 100` en `pyproject.toml`: `make test` (y con él `make ci` y la CI) falla si un camino nuevo llega sin su test. Las ramas de error se alcanzan con `monkeypatch` del colaborador que falla; los fallos de permisos con un `os.scandir` falso, porque la CI corre como root.
+- 2026-10-03.
+
 ---
 
 ## Pendiente de entrevista
