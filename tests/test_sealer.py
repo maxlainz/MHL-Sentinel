@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import threading
@@ -13,6 +14,7 @@ from typing import Any
 
 import pytest
 import xxhash
+from lxml import etree
 
 from helpers_ascmhl import run_cli
 from mhl_sentinel import sealer
@@ -552,3 +554,122 @@ def test_startup_recovery_sets_orphans_aside_and_removes_temp_files(
     assert [p.name[:4] for p in sorted(asc.glob("*.mhl"))] == ["0001", "0002"]
     verify = run_cli("ascmhl-debug", "verify", folder)
     assert verify.returncode == 0, verify.stdout + verify.stderr
+
+
+# --- D65: Accept takes the folder as it is, also against a legacy MHL 1.x ---------------------
+
+
+def _project_with_legacy_mhl(settings: Settings) -> Path:
+    """A project whose ``02_OCF`` came with a legacy MHL 1.x (md5) listing three clips."""
+    project = settings.archive_root / "2025" / "2025-01_CLIENTE-CAMPANA"
+    ocf = project / "02_OCF"
+    ocf.mkdir()
+    entries = []
+    for name in ("a.mov", "b.mov", "c.mov"):
+        (ocf / name).write_bytes(name.encode() * 50)
+        set_mtime_before_now(ocf / name)
+        digest = hashlib.md5((ocf / name).read_bytes()).hexdigest()
+        entries.append(f"<hash><file>{name}</file><md5>{digest}</md5></hash>")
+    (ocf / "offload.mhl").write_text(
+        f'<?xml version="1.0"?><hashlist version="1.1">{"".join(entries)}</hashlist>'
+    )
+    set_mtime_before_now(ocf / "offload.mhl")
+    return project
+
+
+def _latest_actions(project: Path) -> dict[str, set[tuple[str, str | None]]]:
+    latest = sorted((project / "ascmhl").glob("*.mhl"))[-1]
+    ns = {"m": "urn:ASC:MHL:v2.0"}
+    out: dict[str, set[tuple[str, str | None]]] = {}
+    for h in etree.parse(str(latest)).findall("m:hashes/m:hash", namespaces=ns):
+        path = str(h.findtext("m:path", namespaces=ns))
+        out[path] = {(etree.QName(c).localname, c.get("action")) for c in list(h)[1:]}
+    return out
+
+
+def _seal_then_review(settings: Settings, db: Database) -> ProjectRow:
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    sealer.request_seal(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    assert db.get_project(project.id).state is ProjectState.SEALED  # type: ignore[union-attr]
+    return project
+
+
+def test_accept_after_deleting_files_listed_in_a_legacy_mhl(tmp_path: Path) -> None:
+    """The reported bug: files deleted since the legacy MHL 1.x kept Accept in review."""
+    settings, db = make_archive(tmp_path)
+    folder = _project_with_legacy_mhl(settings)
+    project = _seal_then_review(settings, db)
+    (folder / "02_OCF" / "b.mov").unlink()
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    assert db.get_project(project.id).state is ProjectState.NEEDS_REVIEW  # type: ignore[union-attr]
+
+    job_id = sealer.request_accept_new_version(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.SEALED, after
+    assert not db.get_review_items(project.id)
+    assert any(
+        e.level == "warning" and "are gone" in e.msg and "02_OCF/b.mov" in e.msg
+        for e in db.get_job_log(job_id)
+    )
+    actions = _latest_actions(folder)
+    assert "02_OCF/b.mov" not in actions
+    for name in ("a.mov", "c.mov"):  # untouched clips still inherit the origin hash
+        assert actions[f"02_OCF/{name}"] == {("xxh128", "original"), ("md5", "verified")}
+    result = run_cli("ascmhl-debug", "verify", folder)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    # The next scan finds nothing and a later Append is not blocked by the gone clip either.
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    assert db.get_project(project.id).state is ProjectState.SEALED  # type: ignore[union-attr]
+    (folder / "02_OCF" / "d.mov").write_bytes(b"D" * 70)
+    set_mtime_before_now(folder / "02_OCF" / "d.mov")
+    sealer.run_scan_cycle(db, settings, now=NOW)  # changed
+    sealer.run_scan_cycle(db, settings, now=NOW)  # stable: append queued
+    run_all_jobs(db, settings)
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.SEALED, after
+    assert _latest_actions(folder) == {"02_OCF/d.mov": {("xxh128", "original")}}
+    result = run_cli("ascmhl-debug", "verify", folder)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_accept_after_modifying_a_file_listed_in_a_legacy_mhl(tmp_path: Path) -> None:
+    """A clip that no longer matches is sealed with xxh128 only: never a false ``verified``."""
+    settings, db = make_archive(tmp_path)
+    folder = _project_with_legacy_mhl(settings)
+    project = _seal_then_review(settings, db)
+    clip = folder / "02_OCF" / "a.mov"
+    clip.write_bytes(b"edited" * 30)
+    set_mtime_before_now(clip)
+    os.utime(clip, (NOW.timestamp() - 60, NOW.timestamp() - 60))
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    assert db.get_project(project.id).state is ProjectState.NEEDS_REVIEW  # type: ignore[union-attr]
+
+    job_id = sealer.request_accept_new_version(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.SEALED, after
+    assert any("without the origin hash" in e.msg for e in db.get_job_log(job_id))
+    actions = _latest_actions(folder)
+    assert actions["02_OCF/a.mov"] == {("xxh128", "original")}
+    assert actions["02_OCF/b.mov"] == {("xxh128", "original"), ("md5", "verified")}
+    result = run_cli("ascmhl-debug", "verify", folder)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_seal_still_blocks_on_legacy_mismatch(tmp_path: Path) -> None:
+    """D39 unchanged for a plain Seal: a file gone from the legacy MHL sends it to review."""
+    settings, db = make_archive(tmp_path)
+    folder = _project_with_legacy_mhl(settings)
+    (folder / "02_OCF" / "c.mov").unlink()
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    sealer.request_seal(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    after = db.get_project(project.id)
+    assert after is not None and after.state is ProjectState.NEEDS_REVIEW
+    assert after.review_reason and "02_OCF/c.mov" in after.review_reason
+    assert not (folder / "ascmhl").exists()

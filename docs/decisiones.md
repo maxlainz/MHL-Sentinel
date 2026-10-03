@@ -351,6 +351,12 @@ Sealing
 - **Elección**: del owner, (2). Se reescribieron los mensajes de los dos commits (árbol idéntico), se abrió la protección de `main` el tiempo justo de un `push --force-with-lease` y se restauró igual; el tag `v0.6.0` se recreó sobre el commit nuevo (la imagen se reconstruyó con el mismo contenido). Excepción puntual a D5/D55 y a «nunca se reescribe un tag publicado»; no sienta precedente. Las descripciones de los PR se editaron. Barreras: `make attribution-check` dentro de `make ci` (mensajes de commit de la rama y `PR_BODY`; la CI también corre al editar un PR) y un hook `PreToolUse` que deniega `git commit|tag` y `gh pr|issue|release` con atribución en el comando.
 - 2026-10-02.
 
+## D65 — `Accept as new version` acepta también lo que no cuadra con un MHL 1.x de origen
+- **Contexto**: con un MHL 1.x de origen en el proyecto (D39), borrar ficheros que ese manifiesto lista y pulsar `Accept as new version` devolvía el proyecto a revisión con exactamente los mismos ficheros: el sellado nuevo volvía a comprobar el MHL 1.x. Un `Append` posterior habría tropezado igual.
+- **Opciones**: (1) Accept acepta todo: borrados → aviso; modificados → se sellan con xxh128 sin heredar el hash de origen; (2) solo los borrados; (3) Accept ignora el MHL 1.x.
+- **Elección**: del owner, (1). Accept significa «acepto la carpeta como está ahora». Los ficheros intactos siguen heredando el hash de origen (`verified`); uno que ya no coincide nunca se anota como `verified` con un hash que falló. Lo aceptado queda como `warning` en el log del trabajo. `Append` solo contrasta con el MHL 1.x los ficheros nuevos (lo ya sellado respondió entonces, o se aceptó). Un `Seal` normal sigue bloqueando como en D39. Matiza D39.
+- 2026-10-03.
+
 ---
 
 ## Pendiente de entrevista
