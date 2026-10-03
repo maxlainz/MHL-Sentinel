@@ -49,7 +49,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 ## Docs
 | Archivo | Leer cuando… |
 |---|---|
-| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D68; entrevistas de producto y técnica cerradas) |
+| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D69; entrevistas de producto y técnica cerradas) |
 | `docs/contexto-archivo.md` | Vas a tocar detección de proyectos, exclusiones, política ante cambios, o necesitas saber qué exige el estudio |
 | `docs/research/asc-mhl-spec-y-referencia.md` | Vas a escribir o leer manifiestos, usar `mhllib`, elegir hash, o dudas de qué hace `ascmhl` ante un cambio |
 | `docs/research/arquitectura-watcher.md` | Vas a tocar scan, scheduler, hasher, GUI, Docker o la DB |
@@ -80,6 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
+- **Estado (2026-10-03, bitácora 08, sin release)**: la imagen escribe con `UMASK 000` y `PGID 100` por defecto: lo que la app crea en el archivo queda 777/666 y el equipo lo puede borrar por SMB (D69). 442 tests. D1–D69.
 - **Estado (2026-10-03, bitácora 07, `v0.6.2`)**: una carpeta sin ficheros (p. ej. un proyecto borrado del que el NAS dejó `ascmhl/`) cuenta como proyecto borrado (`missing`) y ya no entra en el bucle revisión → Accept → `PermissionError` (D67); `Retire` pasa a `Forget permanently` (D68). 440 tests. D1–D68. PR #19.
 - **Estado (2026-10-03, bitácora 06, `v0.6.1`)**: `Accept as new version` ya no vuelve a revisión por ficheros borrados o modificados que lista un MHL 1.x de origen (D65); tests al 100 % de líneas y ramas con umbral en `make ci` (D66). 435 tests. D1–D66. PR #16.
 - **Estado (2026-10-02, bitácora 04, `v0.6.0`)**: proyectos desaparecidos (D58–D63): estado `missing` al primer scan, `Retire`/`Retry` en la Bandeja, espejo del historial en `/config/history/`, carpetas movidas reconocidas por la cadena, `Verify now` por proyecto saltando el horario con aviso. DB `user_version` 2. 225 tests. PR #13. Mismo día, bitácora 05: atribuciones quitadas de `main`, del tag `v0.6.0` y de los PR #13–#14 (historial reescrito por decisión del owner) y vetadas en `make ci` y por hook (D64).

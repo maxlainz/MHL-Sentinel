@@ -374,6 +374,12 @@ Sealing
 - **Elección**: del owner. Solo cambian los textos de la GUI: `Forget permanently`, `Forget and download MHL`, «Forgot X» en el log, «X forgotten» al confirmar. Rutas, nombres internos y trabajo `retire` no cambian (las líneas de log antiguas se siguen leyendo). D60 sigue en vigor con el nombre nuevo.
 - 2026-10-03.
 
+## D69 — UMASK 000 y PGID 100 por defecto: lo que la app crea en el archivo lo puede borrar el equipo
+- **Contexto**: el equipo usa los shares SMB del QNAP desde Mac y Windows. En macOS, borrar o mover un fichero exige escribir en la carpeta que lo contiene; con el UMASK 022 de la imagen, las carpetas `ascmhl/` y `ascmhl_superseded/` nacían 755 y nadie más que el PUID podía borrar ni crear nada dentro. El control de acceso real lo hacen los permisos de share de QTS, no los bits POSIX.
+- **Opciones**: (1) UMASK 000 y PGID 100 (everyone en QNAP) por defecto, sin tocar los datos montados; (2) `chmod` explícito en el código tras cada escritura; (3) dejar 022 y documentar.
+- **Elección**: del owner, (1), la convención de sus apps de NAS. El entrypoint (tini + gosu), si arranca como root, crea usuario y grupo si no existen, cambia dueño solo de `/config`, aplica `umask "$UMASK"` y baja a `PUID:PGID`; sin root (compose `user:`) solo hace `exec`. Nunca `chown`/`chmod` sobre `/archive`. El código no fija modos propios en el archivo (sin `mode=`, `chmod`, `tempfile` ni `copystat`; temporales renombrados con `os.replace`, que conserva el modo del umask), así que con UMASK 000 queda todo 777/666: lo comprueba `tests/test_permissions.py`. La app no crea hard links. El espejo de `/config/history/` sigue igual (`copystat`), porque `/config` no es del equipo.
+- 2026-10-03.
+
 ---
 
 ## Pendiente de entrevista

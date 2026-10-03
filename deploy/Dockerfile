@@ -25,7 +25,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     MHLS_ARCHIVE_ROOT=/archive \
     MHLS_CONFIG_DIR=/config \
     MHLS_PORT=8080 \
-    PUID=1000 PGID=1000 UMASK=022
+    PUID=1000 PGID=100 UMASK=000
 VOLUME ["/archive", "/config"]
 EXPOSE 8080
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
