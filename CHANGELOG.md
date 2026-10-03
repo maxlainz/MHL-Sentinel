@@ -4,6 +4,10 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-10-03 — Versión correcta en la imagen
+### Corregido
+- La imagen `0.6.3` se construyó desde un tag puesto antes del commit de la release y se presentaba como `0.6.2`; `0.6.4` lleva el mismo código con la versión correcta. El tag `v0.6.3` no se reescribe (norma `git.md`).
+
 ## [0.6.3] - 2026-10-03 — Permisos de lo que la app crea en el archivo
 ### Cambiado
 - La imagen escribe por defecto con `UMASK 000` y `PGID 100` (everyone en QNAP): las carpetas y ficheros que la app crea en el archivo (`ascmhl/`, `ascmhl_superseded/`) quedan 777/666 y el equipo puede borrarlos o moverlos por SMB desde Mac y Windows. Compose, `.env.example` y README documentan `PUID`, `PGID` y `UMASK` (D69).
