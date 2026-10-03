@@ -51,7 +51,7 @@ JOB_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Sealing a new version of",
     JobKind.VERIFY: "Verifying",
     JobKind.ROOT_MANIFEST: "Updating the archive manifest",
-    JobKind.RETIRE: "Retiring",
+    JobKind.RETIRE: "Forgetting",
 }
 VERIFY_NOW_LABEL = "Verify now"  # D63: a manual verification, also inside working hours
 
@@ -524,10 +524,10 @@ def detail_sentence(db: Database, project: ProjectRow, settings: Settings) -> st
     if state is ProjectState.IGNORED:
         return "Ignored. The app leaves this folder alone."
     if state is ProjectState.MISSING:
-        text = f"This folder has not been on disk since {_missing_since(project, tz)}."
+        text = f"This project's files have not been on disk since {_missing_since(project, tz)}."
         return text + (
-            " Retry checks the folder again. Retire deletes the app's record and the saved "
-            "MHL history of this project; the archive itself is not touched."
+            " Retry looks for them again. Forget permanently deletes the app's record and the "
+            "saved MHL history of this project; the archive itself is not touched."
         )
     return f"Something went wrong: {project.error or 'unknown error'}. The app retries next round."
 
@@ -593,7 +593,7 @@ _DONE_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Sealed a new version of",
     JobKind.VERIFY: "Verified",
     JobKind.ROOT_MANIFEST: "Updated the archive manifest",
-    JobKind.RETIRE: "Retired",
+    JobKind.RETIRE: "Forgot",
 }
 _FAILED_LABEL: dict[JobKind, str] = {
     JobKind.SEAL: "Could not seal",
@@ -601,7 +601,7 @@ _FAILED_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Could not seal a new version of",
     JobKind.VERIFY: "Could not verify",
     JobKind.ROOT_MANIFEST: "Could not update the archive manifest",
-    JobKind.RETIRE: "Could not retire",
+    JobKind.RETIRE: "Could not forget",
 }
 _QUEUED_LABEL: dict[JobKind, str] = {
     JobKind.SEAL: "Seal",
@@ -609,7 +609,7 @@ _QUEUED_LABEL: dict[JobKind, str] = {
     JobKind.ACCEPT_NEW_VERSION: "Seal a new version of",
     JobKind.VERIFY: "Verify",
     JobKind.ROOT_MANIFEST: "Update the archive manifest",
-    JobKind.RETIRE: "Retire",
+    JobKind.RETIRE: "Forget",
 }
 
 
@@ -696,7 +696,7 @@ def activity(
         when = fmt_when(job.finished_at, tz, now)
         if job.state is JobState.DONE and job.kind is JobKind.RETIRE:
             message = _retire_message(db, job)
-            text = "Retired " + _retired_name(message)
+            text = "Forgot " + _retired_name(message)
             out.past.append(ActivityRow(when, text.strip(), "done", None, message))
         elif job.state is JobState.DONE:
             review = _went_to_review(db, job)

@@ -289,6 +289,8 @@ def run_scan_cycle(
         # D58 firewall: an empty listing of a share that held projects is an unmounted or
         # unreadable share, never "every project vanished".
         raise ArchiveUnavailableError("archive root lists no projects")
+    known = {p.rel_path: p for p in db.list_projects()}
+    candidates = [c for c in candidates if not _is_empty_shell(root, settings, c, known)]
     summary = ScanSummary()
     first = db.get_kv(first_discovery_marker) is None
     summary.discovered = len(candidates)
@@ -337,6 +339,25 @@ def run_scan_cycle(
             continue
         _scan_one(db, settings, project, now, summary)
     return summary
+
+
+def _has_files(folder: Path, settings: Settings) -> bool:
+    """D67: a project is its files. A folder whose walk finds none (only ``ascmhl/``, or
+    nothing) is a deleted project whose history the NAS could not, or did not, remove. An
+    unreadable entry counts as "has files": an incomplete listing is not a decision."""
+    outcome = scan_project(folder, write_ignore_patterns(settings), settings.exclude_globs)
+    return bool(outcome.files or outcome.errors)
+
+
+def _is_empty_shell(
+    root: Path, settings: Settings, cand: ProjectCandidate, known: Mapping[str, ProjectRow]
+) -> bool:
+    """D67: an untracked or ``missing`` folder without files is not on disk (no new project,
+    no reappearance). Tracked projects are checked by their own scan, which already walks them."""
+    row = known.get(cand.rel_path)
+    if row is not None and row.state is not ProjectState.MISSING:
+        return False
+    return not _has_files(root / cand.rel_path, settings)
 
 
 def _folder_gone(path: Path) -> bool:
@@ -481,6 +502,12 @@ def _scan_one(
         db.set_state(project.id, ProjectState.ERROR, error=msg, review_reason=project.review_reason)
         summary.errors.append(f"{project.rel_path}: {msg}")
         summary.states[project.rel_path] = ProjectState.ERROR
+        return
+    if not outcome.files:  # D67: emptied folder = deleted project
+        db.finish_scan(scan_id, files=0, bytes=0, now=now)
+        _mark_missing(db, project, now)
+        summary.missing.append(project.rel_path)
+        summary.states[project.rel_path] = ProjectState.MISSING
         return
 
     previous = db.get_files(project.id) if project.last_scan_at is not None else None
@@ -750,15 +777,16 @@ def request_verify_now(db: Database, project_id: int, now: datetime) -> int:
 
 
 def request_retry(db: Database, settings: Settings, project_id: int, now: datetime) -> bool:
-    """Retry on a ``missing`` project (D61): one ``is_dir()`` on its folder now (also in working
-    hours: a stat costs nothing). Found → the reappearance of D58 (previous state, automatic
-    verification at the next idle window if the app wrote its history) and True. Not found →
-    False and nothing changes."""
+    """Retry on a ``missing`` project (D61): look at its folder now, also in working hours (a
+    stat and, if it is there, a walk of its listing, D67; no file is read). Found with files →
+    the reappearance of D58 (previous state, automatic verification at the next idle window if
+    the app wrote its history) and True. Not found or empty → False and nothing changes."""
     project = _require(db, project_id)
     if project.state is not ProjectState.MISSING:
         raise SealerError(f"{project.rel_path}: only a missing project can be retried")
+    folder = settings.archive_root / project.rel_path
     try:
-        found = (settings.archive_root / project.rel_path).is_dir()
+        found = folder.is_dir() and _has_files(folder, settings)  # D67
     except OSError:
         found = False
     if not found:
@@ -998,6 +1026,11 @@ def run_job(
         else:  # a Verify now (D63) waits as queued, so Cancel still finds it
             db.set_state(project.id, ProjectState.QUEUED, review_reason=project.review_reason)
             ctx.log("info", "stopped; back in the queue (hashes already done are kept)")
+    except _FolderEmpty:  # D67: the scan cycle would say the same next round
+        ctx.finish(JobState.CANCELLED)
+        if not _went_missing(db, project.id):
+            _mark_missing(db, project, now_fn())
+        ctx.log("info", "stopped; the project folder has no files left")
     except FileChanged as exc:
         _fail(ctx, f"file kept changing while being read: {exc}")
     except Exception as exc:
@@ -1024,7 +1057,13 @@ def _scan_for_job(ctx: _Ctx, patterns: list[str]) -> list[FileStat]:
     outcome = scan_project(ctx.root, patterns, ctx.settings.exclude_globs)
     if outcome.errors:
         raise OSError("scan errors: " + _list_paths(outcome.errors))
+    if not outcome.files:
+        raise _FolderEmpty
     return outcome.files
+
+
+class _FolderEmpty(Exception):
+    """D67: the project folder has no files left: the project was deleted."""
 
 
 class _FreshReadCache(_DbHashCache):

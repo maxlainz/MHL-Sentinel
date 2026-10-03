@@ -729,10 +729,10 @@ def test_inbox_shows_a_missing_project_as_a_decision(
     assert f'data-dialog-open="retire-{pid}"' in html
     assert f'action="/projects/{pid}/retry?from=inbox"' in html
     assert "This deletes the app's record and the saved MHL history" in html
-    assert "Retire and download MHL" in html and "The archive folder itself is not touched." in html
+    assert "Forget and download MHL" in html and "The archive folder itself is not touched." in html
     assert re.search(r'data-state="missing"[^>]*><span class="light red"', html)
     card = env.client.get(f"/projects/{pid}").text
-    assert "Retry" in card and "Retire" in card and "Verify now" not in card
+    assert "Retry" in card and "Forget permanently" in card and "Verify now" not in card
     assert "Ignore" not in card
 
 
@@ -750,7 +750,9 @@ def test_retry_both_paths(env: Env) -> None:
     assert r.status_code == 200 and "Still not on disk" in r.text
     project = env.db.get_project(pid)
     assert project is not None and project.state is ProjectState.MISSING
-    (env.archive / "2025" / "2025-05_CLIENTE-BORRADO").mkdir()
+    folder = env.archive / "2025" / "2025-05_CLIENTE-BORRADO"
+    folder.mkdir()
+    (folder / "m.mov").write_bytes(b"x")  # D67: an empty folder is still missing
     r = env.client.post(f"/projects/{pid}/retry?from=inbox", headers=HX)
     assert r.status_code == 200 and "Back on disk" in r.text
     project = env.db.get_project(pid)
@@ -762,10 +764,10 @@ def test_retire_deletes_the_project_and_leaves_a_log_line(env: Env) -> None:
     pid = _make_missing(env)
     folder = _mirror(env, "2025/2025-05_CLIENTE-BORRADO")
     r = env.client.post(f"/projects/{pid}/retire?from=inbox", headers=HX)
-    assert r.status_code == 200 and "2025-05_CLIENTE-BORRADO retired" in r.text
+    assert r.status_code == 200 and "2025-05_CLIENTE-BORRADO forgotten" in r.text
     assert env.db.get_project(pid) is None and not folder.exists()
     activity = env.client.get("/fragments/activity").text
-    assert "Retired 2025-05_CLIENTE-BORRADO" in activity
+    assert "Forgot 2025-05_CLIENTE-BORRADO" in activity
     assert "(history mirror deleted)" in activity
     assert env.client.post(f"/projects/{pid}/retire", headers=HX).status_code == 404
 
@@ -777,7 +779,7 @@ def test_retire_from_the_detail_page_redirects_home(env: Env) -> None:
     pid = _make_missing(env, "2025-06_CLIENTE-OTRO")
     r = env.client.post(f"/projects/{pid}/retire")  # no JS
     assert r.status_code == 200 and r.url.path == "/"
-    assert "2025-06_CLIENTE-OTRO retired" in r.text
+    assert "2025-06_CLIENTE-OTRO forgotten" in r.text
 
 
 def test_retire_refuses_a_project_that_is_not_missing(env: Env) -> None:

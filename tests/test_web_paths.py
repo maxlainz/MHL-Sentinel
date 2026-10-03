@@ -213,7 +213,7 @@ def test_detail_sentence_variants(env: Env) -> None:
         db, project(env, "unsealed"), s
     )
     db.set_state(pid, ProjectState.MISSING)
-    assert "has not been on disk since the last round" in views.detail_sentence(
+    assert "files have not been on disk since the last round" in views.detail_sentence(
         db, project(env, "unsealed"), s
     )
 
@@ -280,8 +280,8 @@ def test_activity_failed_cancelled_retired_and_running_jobs(env: Env) -> None:
     texts = {r.text: r for r in act.past}
     assert texts["Could not seal 2025-03_CLIENTE-NUEVO"].detail == "disk went away"
     assert texts["Added new files to 2025-01_CLIENTE-SELLADO"].detail == "2 files · 5.0 GB"
-    assert texts["Retired 2025-05_X"].detail == "retired 2025/2025-05_X (history mirror deleted)"
-    assert texts["Retired"].detail == ""
+    assert texts["Forgot 2025-05_X"].detail == "retired 2025/2025-05_X (history mirror deleted)"
+    assert texts["Forgot"].detail == ""
     assert texts["Could not update the archive manifest"].detail == ""
 
 
@@ -378,6 +378,7 @@ def test_retry_back_on_disk_without_a_verification(env: Env) -> None:
     )
     env.db.set_state(pid, ProjectState.MISSING)
     (env.archive / "2025" / name).mkdir()
+    (env.archive / "2025" / name / "m.mov").write_bytes(b"x")  # D67
     r = env.client.post(f"/projects/{pid}/retry", headers=HX)
     assert r.status_code == 200 and "Back on disk." in r.text
     assert "verification queued" not in r.text
@@ -394,6 +395,7 @@ def test_retry_in_working_hours_says_when_the_verification_runs(
     )
     env.db.set_state(pid, ProjectState.MISSING)
     (env.archive / "2025" / name).mkdir()
+    (env.archive / "2025" / name / "m.mov").write_bytes(b"x")  # D67
     r = env.client.post(f"/projects/{pid}/retry", headers=HX)
     assert "verification queued, it runs after working hours." in r.text
     assert getattr(env.sup, "notified", 0) >= 1
@@ -409,7 +411,7 @@ def test_retire_conflicts_and_plain_redirect(env: Env) -> None:
     env.db.set_state(gone, ProjectState.MISSING)
     r = env.client.post(f"/projects/{gone}/retire", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == f"/?retired={name}"
-    assert f"{name} retired" in env.client.get(f"/?retired={name}").text
+    assert f"{name} forgotten" in env.client.get(f"/?retired={name}").text
 
 
 def test_scan_now_awaits_an_async_supervisor_and_redirects_plain_posts(env: Env) -> None:
@@ -484,5 +486,5 @@ def test_activity_skips_other_log_lines_and_jobs_that_never_finished(env: Env) -
     with db.transaction() as conn:  # done without a finish time (damaged row): not listed
         conn.execute("UPDATE jobs SET finished_at = NULL WHERE id = ?", (ghost,))
     texts = [r.text for r in views.activity(db, MADRID, NOW, None).past]
-    assert "Sealed 2025-01_CLIENTE-SELLADO" in texts and "Retired 2025-05_X" in texts
+    assert "Sealed 2025-01_CLIENTE-SELLADO" in texts and "Forgot 2025-05_X" in texts
     assert len(texts) == 2
