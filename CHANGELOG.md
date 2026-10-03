@@ -3,6 +3,8 @@
 Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado: [SemVer](https://semver.org/lang/es/). Categorías: Añadido · Cambiado · Corregido · Decidido · Medido · Eliminado.
 
 ## [Unreleased]
+
+## [0.6.2] - 2026-10-03 — Proyecto borrado que deja su ascmhl/
 ### Corregido
 - Un proyecto borrado del NAS cuya carpeta sigue existiendo solo con su `ascmhl/` ya no se queda en bucle (revisión → `Accept` → `PermissionError` → error → revisión): una carpeta sin ficheros cuenta como proyecto desaparecido (`missing`), una carpeta vacía no aparece como proyecto nuevo y un trabajo que encuentra la carpeta vacía se cancela (D67).
 
