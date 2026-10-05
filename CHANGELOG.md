@@ -4,6 +4,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+### Decidido
+- El tag `v0.7.0`, puesto por error antes del commit de release, se mueve a ese commit como excepción única (D71).
+
 ## [0.7.0] - 2026-10-05 — Etiquetas de Finder
 
 ### Añadido
