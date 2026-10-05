@@ -4,6 +4,11 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-05 — Mismo código que 0.7.0
+
+### Corregido
+- El commit de integración del #27 entró en `main` con un trailer de atribución (D64) y la CI de `main` quedó en rojo; `main` está protegida contra force-push, así que no se reescribe: esta versión, con el mismo código que la 0.7.0, deja `main` en verde. Al integrar un PR siempre se da un cuerpo explícito al commit.
+
 ### Decidido
 - El tag `v0.7.0`, puesto por error antes del commit de release, se mueve a ese commit como excepción única (D71).
 

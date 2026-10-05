@@ -80,6 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
+- **Estado (2026-10-05, bitácora 09, `v0.7.1`)**: mismo código que `v0.7.0`; deja verde la CI de `main` tras el trailer de atribución que entró con el merge del #27 (no se reescribe `main`).
 - **Estado (2026-10-05, bitácora 09, `v0.7.0`)**: etiquetas de Finder por estado en las carpetas de proyecto, opt-in en Ajustes (D70); formato supuesto, pendiente de medir en el NAS (#24). 460 tests. D1–D70. PR #25. Tag `v0.7.0` movido al commit de release por excepción del owner (D71).
 - **Estado (2026-10-03, bitácora 08, `v0.6.4`)**: la imagen escribe con `UMASK 000` y `PGID 100` por defecto: lo que la app crea en el archivo queda 777/666 y el equipo lo puede borrar por SMB (D69). 442 tests. D1–D69.
 - **Estado (2026-10-03, bitácora 07, `v0.6.2`)**: una carpeta sin ficheros (p. ej. un proyecto borrado del que el NAS dejó `ascmhl/`) cuenta como proyecto borrado (`missing`) y ya no entra en el bucle revisión → Accept → `PermissionError` (D67); `Retire` pasa a `Forget permanently` (D68). 440 tests. D1–D68. PR #19.
