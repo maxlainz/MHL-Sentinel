@@ -30,6 +30,7 @@ FORM_FIELDS: tuple[str, ...] = (
     "scan_interval_minutes",
     "log_level",
     "theme",
+    "finder_tags",
 )
 LOG_LEVELS: tuple[str, ...] = ("debug", "info", "warning", "error")
 THEMES: tuple[tuple[str, str], ...] = (  # D56
@@ -53,6 +54,7 @@ _ENV_FOR_FIELD: dict[str, str] = {
     "scan_interval_minutes": "SCAN_INTERVAL_MINUTES",
     "log_level": "LOG_LEVEL",
     "theme": "THEME",
+    "finder_tags": "FINDER_TAGS",
 }
 _SPLIT = re.compile(r"[,\n]")
 
@@ -80,6 +82,7 @@ def values_from_settings(settings: Settings) -> dict[str, Any]:
         "scan_interval_minutes": str(settings.scan_interval_minutes),
         "log_level": settings.log_level,
         "theme": settings.theme,
+        "finder_tags": settings.finder_tags,
     }
 
 
@@ -89,6 +92,7 @@ def values_from_form(form: Mapping[str, Sequence[str]]) -> dict[str, Any]:
         return str(items[-1]).strip()
 
     values: dict[str, Any] = {name: one(name) for name in FORM_FIELDS if name != "days"}
+    values["finder_tags"] = bool(form.get("finder_tags"))  # an unchecked box is not sent
     values["days"] = [str(d).strip().lower() for d in form.get("days", []) if str(d).strip()]
     return values
 
@@ -138,6 +142,7 @@ def build_settings(
         scan_interval_minutes=values["scan_interval_minutes"],
         log_level=values["log_level"],
         theme=values.get("theme") or "auto",  # an old form without the field keeps auto
+        finder_tags=bool(values.get("finder_tags")),
     )
     try:
         return Settings(**kwargs), {}

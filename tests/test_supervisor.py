@@ -940,3 +940,41 @@ def test_begin_stop_before_the_loop_exists(tmp_path: Path) -> None:
         sup.gate.set()
         sup._begin_stop()  # no loop wakeup event yet: only gate and hasher wake
         assert not sup.gate.is_set() and sup._wake.is_set()
+
+
+@pytest.mark.parametrize("working", [False, True])
+def test_tick_syncs_finder_tags_outside_working_hours_only(tmp_path: Path, working: bool) -> None:
+    """D70: tags follow the states at each tick, but never inside working hours (D33); a failure
+    reaches the activity log once."""
+    archive = tmp_path / "archive"
+    (archive / "2025" / "2025-01_CLIENTE-CAMPANA").mkdir(parents=True)
+    (archive / "2025" / "2025-01_CLIENTE-CAMPANA" / "a.mov").write_bytes(b"x")  # not empty (D67)
+    hours = WorkingHoursConfig(days=ALL_DAYS if working else [], start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=hours, finder_tags=True)
+    calls: list[tuple[Path, str | None]] = []
+
+    def fake(path: Path, tag: str | None) -> bool:
+        calls.append((path, tag))
+        raise OSError(1, "Operation not permitted")
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            db.upsert_project("2025/2025-01_CLIENTE-CAMPANA", "x", False, utcnow())
+            bus = EventBus(db)
+            q = bus.subscribe()
+            sup = Supervisor(db, SettingsRef(settings), bus, now_fn=lambda: NOON)
+            sup.tag_sync.apply_fn = fake
+            sup.tag_sync.supported = True
+            await sup.tick()
+            await sup.tick()
+            logs = [e.payload["msg"] for e in drain(q) if e.kind == "log"]
+            tagged = [m for m in logs if m.startswith("Finder tag not set")]
+            if working:
+                assert calls == [] and tagged == []
+            else:
+                assert calls == [(archive / "2025" / "2025-01_CLIENTE-CAMPANA", "MHL pendiente")]
+                assert tagged == [
+                    "Finder tag not set on 2025/2025-01_CLIENTE-CAMPANA: Operation not permitted"
+                ]
+
+    run(body)
