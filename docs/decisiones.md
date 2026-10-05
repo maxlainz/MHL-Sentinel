@@ -390,5 +390,13 @@ Sealing
 
 ---
 
+## D71 — Excepción: el tag `v0.7.0` se mueve al commit de release
+- **Contexto**: el 2026-10-05 el tag `v0.7.0` se subió antes de integrar el PR de release #26: quedó sobre el commit de #25, con `version = "0.6.4"` en `pyproject.toml`, y la imagen se habría presentado como 0.6.4 (lo mismo que pasó con `v0.6.3`, D69 / bitácora 08). Causa: los comandos dados al owner llevaban comentarios `# …` en la misma línea, que zsh no trata como comentarios, así que `git log` y `gh run list` fallaron y el resto siguió.
+- **Opciones**: (1) mover el tag minutos después de publicarlo; (2) dejarlo y cortar `v0.7.1` con el mismo código, como en `v0.6.4`.
+- **Elección**: del owner, (1), como excepción única a «nunca se reescribe un tag publicado» (norma `git.md`): llevaba minutos publicado y solo lo sigue Watchtower a través de `latest`, que el nuevo tag vuelve a mover. La norma sigue en vigor. Los comandos que se den al owner van sin comentarios en línea, y el tag solo se pone después de comprobar que el último commit de `main` es el de release.
+- 2026-10-05.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).
