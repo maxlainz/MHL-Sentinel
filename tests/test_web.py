@@ -866,3 +866,16 @@ def test_retire_works_without_javascript(env: Env) -> None:
     page = env.client.get("/").text
     assert f'<noscript><a class="btn small quiet" href="/projects/{pid}/history.zip"' in page
     assert f'action="/projects/{pid}/retire?from=inbox"><button type="submit"' in page
+
+
+def test_finder_tags_are_off_by_default_and_saved_from_the_checkbox(env: Env) -> None:
+    """D70: opt-in; an unchecked box is simply not sent by the browser."""
+    assert env.ref.value.finder_tags is False
+    page = env.client.get("/settings").text
+    assert not re.search(r'name="finder_tags" value="1"\s+checked', page)
+    r = env.client.post("/settings", data=_form(finder_tags="1"))
+    assert r.status_code == 200 and env.ref.value.finder_tags is True
+    assert yaml.safe_load(env.ref.value.config_file.read_text())["finder_tags"] is True
+    assert re.search(r'name="finder_tags" value="1"\s+checked', r.text)
+    env.client.post("/settings", data=_form())
+    assert env.ref.value.finder_tags is False

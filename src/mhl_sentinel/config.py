@@ -40,6 +40,7 @@ YAML_FIELDS: tuple[str, ...] = (
     "log_level",
     "timezone",
     "theme",
+    "finder_tags",
     "hash_format",
 )
 
@@ -118,6 +119,7 @@ class Settings(BaseSettings):
     scan_interval_minutes: int = Field(default=60, ge=1)
     log_level: Literal["debug", "info", "warning", "error"] = "info"
     theme: Literal["auto", "light", "dark"] = "auto"  # D56: GUI theme; auto follows the system
+    finder_tags: bool = False  # D70: Finder tag on each project folder by state, opt-in
     hash_format: Literal["xxh128"] = "xxh128"  # D30, not editable in the GUI
     # IANA zone of the working hours. Not env TZ: the process always runs with TZ=UTC
     # because ascmhl writes dates with the current offset.

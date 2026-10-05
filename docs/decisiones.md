@@ -382,5 +382,13 @@ Sealing
 
 ---
 
+## D70 — Etiquetas de Finder por estado en cada carpeta de proyecto (opt-in)
+- **Contexto**: el owner pregunta si las carpetas de proyecto pueden llevar una etiqueta de Finder según su estado, para ver de un vistazo en el share qué está sellado y qué pide atención sin abrir la app.
+- **Opciones**: mapa de (1) tres colores, (2) solo verde y rojo, (3) una etiqueta por estado interno; activación (a) opt-in en Ajustes o (b) siempre; (i) medir antes en el NAS cómo guarda Samba las etiquetas o (ii) implementar ya con el formato más habitual.
+- **Elección**: del owner, (1)+(a)+(ii). Verde «MHL OK» = `sealed`; amarillo «MHL pendiente» = `unsealed`/`changed`/`queued`/`hashing`; rojo «MHL revisar» = `needs_review`/`error`; `ignored` sin etiqueta; `missing` no se toca. Apagado por defecto (`finder_tags: false`, Ajustes → Appearance). Módulo `finder_tags.py`: la etiqueta es el atributo `com.apple.metadata:_kMDItemUserTags` (plist binario de `"Nombre\n<color>"`), escrito como lo guarda Samba con `vfs_fruit` + `streams_xattr`: xattr Linux `user.DosStream.<stream>:$DATA` con un NUL final. **Supuesto sin medir** sobre el NAS: si el Finder no ve las etiquetas, se ajusta el formato con lo que muestre `getfattr` (issue). La app solo pone o quita sus tres etiquetas y conserva las del equipo; no sobrescribe un atributo que no sabe leer. Las escribe el tick del supervisor solo fuera del horario laboral (D33), y solo cuando cambia el estado; apagar la opción las quita. Como el cliente SMB de macOS no vuelve a pedir las etiquetas de una carpeta mientras no cambia la fecha de su carpeta madre (nota `Caché de directorios del cliente SMB en macOS`), tras cambiar etiquetas la app actualiza el mtime de cada carpeta madre afectada (como `touch`; pregunta al owner el mismo día, elegido frente a no tocar nada). Un fallo (p. ej. permisos) va una vez al log de actividad. La etiqueta no toca contenidos ni el mtime de la carpeta: no cuenta como cambio ni altera los hashes MHL. La DB sigue siendo la fuente de verdad (`docs/research/arquitectura-watcher.md`: xattrs poco fiables por SMB para guardar estado).
+- 2026-10-05.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

@@ -103,6 +103,15 @@
       <small>Auto follows the light or dark setting of each computer or phone.</small>
       {{ err(form, "theme") }}{{ envnote(env_overrides, "theme") }}
     </div>
+    <div class="field">
+      <span class="name">Finder tags</span>
+      <label class="chip"><input type="checkbox" name="finder_tags" value="1"
+             {% if form.values.finder_tags %}checked{% endif %}><span>Tag project folders by state</span></label>
+      <small>Green "MHL OK" when sealed, yellow "MHL pendiente" while waiting or sealing, red
+        "MHL revisar" when it needs review. Tags change only outside working hours; turning this
+        off removes them. Other tags are left alone.</small>
+      {{ envnote(env_overrides, "finder_tags") }}
+    </div>
   </section>
 
   <details class="advanced card" {% if form.errors.scan_interval_minutes or form.errors.log_level %}open{% endif %}>

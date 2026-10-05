@@ -19,6 +19,8 @@
 - A job whose project the scan cycle finds ``missing`` (D58) or moved (D62) meanwhile is asked to
   yield the same way, so it does not sit paused (or fail file after file) on a folder that is
   gone, and Retire (D60) is not blocked by it.
+- With ``finder_tags`` on (D70), each tick outside working hours brings the Finder tag of every
+  project folder in line with its state (``finder_tags.TagSync``); off, it removes them.
 
 Every exception inside a tick or a job is logged and published as a ``log`` event; nothing kills
 the loop or the thread.
@@ -38,7 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from mhl_sentinel import rootmanifest, sealer
+from mhl_sentinel import finder_tags, rootmanifest, sealer
 from mhl_sentinel.clock import to_iso, utcnow
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow
@@ -149,6 +151,7 @@ class Supervisor:
         # before the first job; it needs the archive, so it runs at the first tick that reaches
         # it, and the hasher waits for it.
         self._fs_recovered = threading.Event()
+        self.tag_sync = finder_tags.TagSync()  # D70; touched only from the tick
 
     # -- public API --------------------------------------------------------------------------
 
@@ -401,6 +404,12 @@ class Supervisor:
                 if summary.enqueued or maintenance:
                     self._wake.set()
             self._publish_state_diff(before, self._project_states())
+        if reachable and not working and not self.stop_event.is_set():
+            # D70: Finder tags follow the states, outside working hours only (D33).
+            for error in await asyncio.to_thread(
+                self.tag_sync.sync, self.db, settings.archive_root, settings.finder_tags
+            ):
+                self._publish_log("warning", error)
         payload["last_cycle_at"] = to_iso(self._last_cycle_at) if self._last_cycle_at else None
         self.bus.publish("cycle.finished", payload)
 
