@@ -4,6 +4,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05 — Etiquetas de Finder
+
 ### Añadido
 - Etiquetas de Finder por estado en las carpetas de proyecto, opcionales en Ajustes → Appearance: verde «MHL OK» (sellado), amarillo «MHL pendiente» (por sellar o sellando), rojo «MHL revisar» (pide revisión o error). Se escriben fuera del horario laboral, respetan las etiquetas del equipo y se quitan al apagar la opción; la app actualiza la fecha de la carpeta madre para que los Mac refresquen. El formato supone Samba con `streams_xattr`; falta comprobarlo en el NAS (D70).
 

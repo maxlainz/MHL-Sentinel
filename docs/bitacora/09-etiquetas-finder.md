@@ -13,7 +13,7 @@
 En el NAS, una etiqueta puesta a mano desde un Mac aparece como `user.DosStream.com.apple.metadata:_kMDItemUserTags:$DATA` empezando por `bplist` y acabando en `00`, sin ficheros `._*`. Comando y criterio en #24.
 
 ## Siguiente paso
-Medir en el NAS (#24) antes de activar la opción allí; si el formato difiere, ajustar `XATTR`. Lo demás de la bitácora 08 sigue en pie.
+Publicado como `v0.7.0` (PR #25). Medir en el NAS (#24) antes de activar la opción allí; si el formato difiere, ajustar `XATTR`. Lo demás de la bitácora 08 sigue en pie.
 
 ## Vault
 Nota nueva `Etiquetas de Finder (atributo _kMDItemUserTags)`; añadida al mapa `Archivo`.
