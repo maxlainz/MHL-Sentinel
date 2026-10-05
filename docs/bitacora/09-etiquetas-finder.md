@@ -12,6 +12,10 @@
 ## Predicción (sin medir)
 En el NAS, una etiqueta puesta a mano desde un Mac aparece como `user.DosStream.com.apple.metadata:_kMDItemUserTags:$DATA` empezando por `bplist` y acabando en `00`, sin ficheros `._*`. Comando y criterio en #24.
 
+## Incidencias de la release
+- El tag `v0.7.0` se subió antes de integrar el PR de release (comandos con comentarios `#` en línea, que zsh no ignora); se movió al commit de release (D71).
+- El merge del #27 se hizo sin cuerpo explícito y la herramienta de merge añadió `Co-authored-by`: CI de `main` en rojo por `attribution-check`. El force-push para quitarlo lo rechazó la protección de `main`; se publica `v0.7.1` con el mismo código. Al integrar, siempre cuerpo explícito.
+
 ## Siguiente paso
 Publicado como `v0.7.0` (PR #25). Medir en el NAS (#24) antes de activar la opción allí; si el formato difiere, ajustar `XATTR`. Lo demás de la bitácora 08 sigue en pie.
 
