@@ -406,5 +406,13 @@ Sealing
 
 ---
 
+## D73 — `Seal now` / `Accept now`: arrancar ya un trabajo manual en cola, saltando el horario laboral
+- **Contexto**: un `Seal` pulsado en horario laboral espera a que acabe la jornada (D33). El owner pide poder sellar ya cuando le corre prisa, como ya hace `Verify now` (D63).
+- **Opciones**: dónde: (1) en el proyecto en cola (y en uno pausado por el horario), junto a `Cancel`; (2) dos botones desde el principio, `Seal` y `Seal now`. Aviso: (a) diálogo con los GB a leer, como D63; (b) sin confirmación. Alcance: (i) también `Accept as new version`; (ii) solo `Seal`.
+- **Elección**: del owner, (1)+(a)+(i). En horario laboral, un proyecto con un `seal` o `accept_new_version` manual en cola, o en marcha pero pausado por el horario, muestra `Seal now` / `Accept now` en la ficha y en la Bandeja. Pide confirmar con el tamaño («reads N GB from the NAS during working hours and can slow everyone down»). Al confirmar, el trabajo pasa a `bypass_hours` (D63): empieza en cuanto el hasher queda libre, no se pausa al seguir la jornada y un trabajo automático pausado le cede el sitio. Uno ya en marcha y pausado vuelve a la cola con sus checkpoints (D28) y se retoma con el horario abierto. `Cancel` sigue valiendo (D53, D57). Fuera de horario no hay botón: el trabajo ya corre. `Seal` sigue siendo un clic y la cola nocturna, lo normal.
+- 2026-10-06.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

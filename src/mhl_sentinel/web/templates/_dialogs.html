@@ -19,19 +19,29 @@
 <form class="inline" method="post" action="/projects/{{ id }}/retire{{ query }}"><button type="submit" class="btn small quiet">Forget permanently (no undo)</button></form></noscript>
 {%- endmacro %}
 
-{% macro verify_now(id, size, target, query="") -%}
-<button type="button" class="btn" data-dialog-open="verify-{{ id }}">Verify now</button>
-<dialog id="verify-{{ id }}" class="confirm" aria-labelledby="verify-title-{{ id }}">
-  <form method="post" action="/projects/{{ id }}/verify{{ query }}"
-        hx-post="/projects/{{ id }}/verify{{ query }}" hx-target="{{ target }}" hx-swap="outerHTML">
-    <h2 id="verify-title-{{ id }}">Verify during working hours?</h2>
-    <p>Verify now reads {{ size|size }} from the NAS during working hours and can slow everyone
+{# A button that reads the NAS during working hours, behind a confirmation (D63, D73). #}
+{% macro working_hours_read(id, key, path, label, verb, size, target, query="", cls="btn") -%}
+<button type="button" class="{{ cls }}" data-dialog-open="{{ key }}-{{ id }}">{{ label }}</button>
+<dialog id="{{ key }}-{{ id }}" class="confirm" aria-labelledby="{{ key }}-title-{{ id }}">
+  <form method="post" action="/projects/{{ id }}/{{ path }}{{ query }}"
+        hx-post="/projects/{{ id }}/{{ path }}{{ query }}" hx-target="{{ target }}" hx-swap="outerHTML">
+    <h2 id="{{ key }}-title-{{ id }}">{{ verb }} during working hours?</h2>
+    <p>{{ label }} reads {{ size|size }} from the NAS during working hours and can slow everyone
       down. Continue?</p>
     <div class="dialog-acts">
-      <button type="submit" class="btn small">Verify now</button>
+      <button type="submit" class="btn small">{{ label }}</button>
       <button type="button" class="btn small ghost" data-dialog-close>Cancel</button>
     </div>
   </form>
 </dialog>
-<noscript><form class="inline" method="post" action="/projects/{{ id }}/verify{{ query }}"><button type="submit" class="btn">Verify now</button></form></noscript>
+<noscript><form class="inline" method="post" action="/projects/{{ id }}/{{ path }}{{ query }}"><button type="submit" class="{{ cls }}">{{ label }}</button></form></noscript>
+{%- endmacro %}
+
+{% macro verify_now(id, size, target, query="") -%}
+{{ working_hours_read(id, "verify", "verify", "Verify now", "Verify", size, target, query) }}
+{%- endmacro %}
+
+{# Seal now / Accept now (D73): label is "Seal now" or "Accept now". #}
+{% macro start_now(id, label, size, target, query="", cls="btn") -%}
+{{ working_hours_read(id, "start", "start-now", label, label.split()[0], size, target, query, cls) }}
 {%- endmacro %}

@@ -399,6 +399,73 @@ def test_request_cancel_refuses_a_running_job(tmp_path: Path) -> None:
         sealer.request_cancel(db, project.id, NOW)
 
 
+def test_start_now_flags_a_queued_seal_or_accept(tmp_path: Path) -> None:
+    """D73: Seal now / Accept now give a queued manual Seal or Accept ``bypass_hours``; the job
+    keeps waiting as ``queued`` (the supervisor takes it) and stays cancellable."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    first, second = db.list_projects()
+    with pytest.raises(sealer.SealerError, match="nothing to start now"):
+        sealer.request_start_now(db, first.id, NOW)  # unsealed: nothing queued
+
+    job_id = sealer.request_seal(db, first.id, NOW)
+    queued = db.get_project(first.id)
+    assert queued is not None
+    assert sealer.startable_now_job(db, queued) == db.get_job(job_id)
+    assert sealer.request_start_now(db, first.id, NOW) == job_id
+    job = db.get_job(job_id)
+    assert job is not None and job.state is JobState.QUEUED and job.bypass_hours
+    assert db.next_job(NOW, bypass_only=True) == job
+    project = db.get_project(first.id)
+    assert project is not None and project.state is ProjectState.QUEUED
+    assert sealer.startable_now_job(db, project) is None  # already starting: no button
+    assert sealer.request_start_now(db, first.id, NOW) == job_id  # a second click is harmless
+    assert sealer.request_cancel(db, first.id, NOW) == job_id  # Cancel still applies (D53)
+
+    # Accept as new version: same thing, the review reason survives.
+    sealer.request_seal(db, first.id, NOW)
+    run_all_jobs(db, settings)
+    db.set_state(first.id, ProjectState.NEEDS_REVIEW, review_reason="modified: 01_MASTERS/m.mov")
+    accept_id = sealer.request_accept_new_version(db, first.id, NOW)
+    assert sealer.request_start_now(db, first.id, NOW) == accept_id
+    accept = db.get_job(accept_id)
+    assert accept is not None and accept.bypass_hours and accept.state is JobState.QUEUED
+    project = db.get_project(first.id)
+    assert project is not None and project.state is ProjectState.QUEUED
+    assert project.review_reason == "modified: 01_MASTERS/m.mov"
+
+    # A Verify now already runs inside working hours; an automatic job never jumps them.
+    sealer.request_cancel(db, first.id, NOW)
+    db.set_state(first.id, ProjectState.SEALED)
+    sealer.request_verify_now(db, first.id, NOW)
+    with pytest.raises(sealer.SealerError, match="nothing to start now"):
+        sealer.request_start_now(db, first.id, NOW)
+    sealer.enqueue(db, second.id, JobKind.SEAL, Trigger.AUTO, NOW)
+    db.set_state(second.id, ProjectState.QUEUED)
+    with pytest.raises(sealer.SealerError, match="nothing to start now"):
+        sealer.request_start_now(db, second.id, NOW)
+    with pytest.raises(sealer.SealerError):
+        sealer.request_start_now(db, 999, NOW)
+
+
+def test_start_now_refuses_a_running_job(tmp_path: Path) -> None:
+    """D73: a running Seal is the supervisor's (``Supervisor.request_start_now``), as for D57."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    project = db.list_projects()[0]
+    job_id = sealer.request_seal(db, project.id, NOW)
+    db.set_job_state(job_id, JobState.RUNNING, NOW)
+    db.set_state(project.id, ProjectState.HASHING)
+    hashing = db.get_project(project.id)
+    assert hashing is not None
+    running = sealer.startable_now_job(db, hashing)
+    assert running is not None and running.id == job_id
+    with pytest.raises(sealer.SealerError, match="through the supervisor"):
+        sealer.request_start_now(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None and not job.bypass_hours
+
+
 # --- issue #1: orphan manifests ----------------------------------------------------------------
 
 

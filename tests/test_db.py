@@ -359,6 +359,13 @@ def test_bypass_jobs_promotion_and_finished_jobs(db: Database) -> None:
     assert db.enqueue_job(JobKind.VERIFY, pid, Trigger.AUTO, 10, T0) == auto
     assert db.get_job(auto) == promoted
 
+    # Seal now (D73): the flag is set once; a second call reports it was already there.
+    assert db.set_job_bypass_hours(seal)
+    flagged = db.get_job(seal)
+    assert flagged is not None and flagged.bypass_hours and flagged.state is JobState.QUEUED
+    assert not db.set_job_bypass_hours(seal)
+    assert not db.set_job_bypass_hours(9999)
+
     done = db.record_finished_job(JobKind.RETIRE, None, Trigger.MANUAL, JobState.DONE, T0)
     row = db.get_job(done)
     assert row is not None and row.state is JobState.DONE and row.project_id is None

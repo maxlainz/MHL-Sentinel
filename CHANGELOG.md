@@ -4,6 +4,12 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+### Añadido
+- `Seal now` / `Accept now`: un Seal o Accept que espera a que acabe la jornada se puede arrancar ya, en la ficha del proyecto y en la Bandeja. Avisa de los GB que va a leer del NAS en horario laboral y pide confirmar; una vez en marcha no se pausa y `Cancel` sigue valiendo (D73).
+
+### Decidido
+- D73: ver `docs/decisiones.md`.
+
 ## [0.7.2] - 2026-10-06 — Etiquetas de Finder sin falsear
 
 ### Cambiado

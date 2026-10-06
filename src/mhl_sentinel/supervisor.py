@@ -16,6 +16,11 @@
   is always open, so the working hours never pause it. A job paused by the closed gate would
   hold the single hasher until the evening, so a Verify now asks it to yield: it goes back to
   ``queued`` with its checkpoints, exactly as on ``stop()``.
+- Seal now / Accept now (D73) give a manual Seal or Accept the same ``bypass_hours``. A queued
+  one is only flagged (``sealer.request_start_now``). The current one (``request_start_now``)
+  is flagged and asked to yield, also when the gate happens to be open (it can lag the clock by
+  a tick): back in the queue with its checkpoints, the hasher takes it again at once with the
+  always-open gate. The yield is what swaps the gate; the job reads nothing twice (D28).
 - A job whose project the scan cycle finds ``missing`` (D58) or moved (D62) meanwhile is asked to
   yield the same way, so it does not sit paused (or fail file after file) on a folder that is
   gone, and Retire (D60) is not blocked by it.
@@ -229,17 +234,49 @@ class Supervisor:
         log.info("cancel requested for job %d (%s)", job.id, job.kind)
         return True
 
+    def request_start_now(self, project_id: int) -> bool:
+        """Seal now / Accept now on the running job (D73): if the current job is the project's
+        manual ``seal`` or ``accept_new_version`` without ``bypass_hours``, flag it in the DB and
+        ask it to yield; it comes back with the always-open gate. True if it was asked. A second
+        click finds the flag already set (the in-memory row is stale until the job restarts)
+        and returns False. Thread-safe."""
+        with self._lock:
+            job = self._current_job
+            if (
+                job is None
+                or job.project_id != project_id
+                or not sealer.is_startable_now(job)
+                or not self.db.set_job_bypass_hours(job.id)
+            ):
+                return False
+            self._yield_event.set()
+        log.info("job %d starts now: back in the queue to run in working hours", job.id)
+        return True
+
     def notify_job_queued(self) -> None:
         """Wake the idle hasher now instead of after ``idle_seconds`` (e.g. after Seal). Also
-        inside working hours: a Verify now (D63) runs with the gate closed, and a job paused by
-        the gate is asked to yield to it (back to the queue, checkpoints kept)."""
-        if not self.gate.is_set() and self.db.next_job(self.now_fn(), bypass_only=True):
+        inside working hours: a Verify now (D63) or a Seal now (D73) runs with the gate closed,
+        and a job paused by the gate is asked to yield to it (back to the queue, checkpoints
+        kept). So is the paused job itself if it got ``bypass_hours`` meanwhile: the hasher may
+        have taken it from the queue just before a Seal now flagged it there (D73)."""
+        if not self.gate.is_set():
             with self._lock:
                 job = self._current_job
-                if job is not None and not job.bypass_hours:
+                if (
+                    job is not None
+                    and not job.bypass_hours
+                    and (
+                        self.db.next_job(self.now_fn(), bypass_only=True) is not None
+                        or self._flagged_bypass(job)
+                    )
+                ):
                     self._yield_event.set()
-                    log.info("job %d yields to a Verify now (working hours)", job.id)
+                    log.info("job %d yields to a job that runs in working hours", job.id)
         self._wake.set()
+
+    def _flagged_bypass(self, job: JobRow) -> bool:
+        fresh = self.db.get_job(job.id)
+        return fresh is not None and fresh.bypass_hours
 
     def _yield_if_project_gone(self) -> None:
         """After a scan cycle: the current job's project went ``missing`` or was moved."""
