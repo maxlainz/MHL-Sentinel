@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from helpers_ascmhl import run_cli
 from mhl_sentinel import sealer
 from mhl_sentinel.clock import utcnow
 from mhl_sentinel.config import Settings, WorkingHoursConfig
@@ -979,3 +980,200 @@ def test_tick_syncs_finder_tags_outside_working_hours_only(tmp_path: Path, worki
                 ]
 
     run(body)
+
+
+# -- Seal now / Accept now (D73) ----------------------------------------------------------------
+
+EVENING = datetime(2026, 10, 1, 23, 0, tzinfo=UTC)
+
+
+def many_files(project: Path, folders: int = 40, files: int = 100) -> None:
+    for d in range(folders):
+        folder = project / "02_OCF" / f"A{d:03d}"
+        folder.mkdir(parents=True)
+        for i in range(files):
+            (folder / f"clip_{i:04d}.bin").write_bytes(bytes([d, i % 256]) * 2048)
+
+
+def test_seal_now_runs_a_queued_seal_inside_working_hours(tmp_path: Path) -> None:
+    """D73: a Seal waiting for the evening gets ``bypass_hours`` and runs with the gate closed."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sealer.run_scan_cycle(db, settings, now=utcnow())
+            first = db.list_projects()[0]
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                EventBus(db),
+                tick_seconds=0.05,
+                idle_seconds=0.05,
+                now_fn=lambda: NOON,
+            )
+            await sup.start()
+            try:
+                await until(lambda: sup.status().archive_reachable)
+                await until(lambda: sup._fs_recovered.is_set())
+                seal_id = sealer.request_seal(db, first.id, utcnow())
+                sup.notify_job_queued()
+                time.sleep(0.3)  # the hasher looks and leaves it for the evening
+                seal = db.get_job(seal_id)
+                assert seal is not None and seal.state is JobState.QUEUED and seal.files_done == 0
+                assert not sup.request_start_now(first.id)  # not running: the sealer's to flag
+                sealer.request_start_now(db, first.id, utcnow())
+                sup.notify_job_queued()
+
+                def sealed() -> bool:
+                    job = db.get_job(seal_id)
+                    return job is not None and job.state is JobState.DONE
+
+                await until(sealed)
+                assert not sup.status().gate_open  # still working hours
+                after = db.get_project(first.id)
+                assert after is not None and after.state is ProjectState.SEALED
+            finally:
+                await sup.stop()
+
+    run(body)
+
+
+def test_seal_now_resumes_a_seal_paused_by_working_hours(tmp_path: Path) -> None:
+    """D73: a Seal paused by the working hours goes back to the queue with its checkpoints and
+    comes back at once with the always-open gate; the generation it writes is valid."""
+    archive = tmp_path / "archive"
+    project = archive / "2024" / "2024-01_CLIENTE-Z_MUCHOS"
+    many_files(project, folders=4)
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+    clock = {"now": EVENING}
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            bus = EventBus(db)
+            q = bus.subscribe()
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                bus,
+                tick_seconds=0.05,
+                idle_seconds=0.05,
+                now_fn=lambda: clock["now"],
+            )
+            # Working hours begin after the first file: the gate closes under the running job.
+            real_progress = db.update_job_progress
+
+            def progress(
+                job_id: int, files_done: int, files_total: int, bytes_done: int, bytes_total: int
+            ) -> None:
+                real_progress(job_id, files_done, files_total, bytes_done, bytes_total)
+                if files_done == 1 and clock["now"] is EVENING:
+                    clock["now"] = NOON
+                    sup.gate.clear()
+
+            db.update_job_progress = progress  # type: ignore[method-assign]
+            await sup.start()
+            try:
+                await until(lambda: db.get_project("2024/2024-01_CLIENTE-Z_MUCHOS") is not None)
+                row = db.get_project("2024/2024-01_CLIENTE-Z_MUCHOS")
+                assert row is not None
+                job_id = sealer.request_seal(db, row.id, utcnow())
+                sup.notify_job_queued()
+
+                def paused() -> bool:
+                    job = db.get_job(job_id)
+                    return job is not None and job.files_done == 1 and not sup.gate.is_set()
+
+                await until(paused)
+                time.sleep(0.2)
+                job = db.get_job(job_id)
+                assert job is not None and job.state is JobState.RUNNING and job.files_done == 1
+                hashing = db.get_project(row.id)
+                assert hashing is not None and hashing.state is ProjectState.HASHING
+                drain(q)
+
+                assert sup.request_start_now(row.id)
+                assert not sup.request_start_now(row.id)  # flagged already: one click is enough
+
+                def sealed() -> bool:
+                    job = db.get_job(job_id)
+                    return job is not None and job.state is JobState.DONE
+
+                await until(sealed)
+                await until(lambda: sup.status().current_job is None)
+                assert not sup.gate.is_set()  # all of it inside working hours
+                done = db.get_job(job_id)
+                assert done is not None and done.bypass_hours and done.files_done == 400
+                after = db.get_project(row.id)
+                assert after is not None and after.state is ProjectState.SEALED
+            finally:
+                await sup.stop()
+            events = drain(q)
+            states = [
+                e.payload["state"]
+                for e in events
+                if e.kind == "project.state" and e.payload["id"] == row.id
+            ]
+            assert states == ["sealed"]  # queued → hashing again within the hasher's own steps
+            started = [e.payload["id"] for e in events if e.kind == "job.started"]
+            assert started == [job_id]  # the same job, taken again
+            finished = [
+                (e.payload["id"], e.payload["state"]) for e in events if e.kind == "job.finished"
+            ]
+            assert finished == [(job_id, "queued"), (job_id, "done")]
+
+    run(body)
+    verify = run_cli("ascmhl-debug", "verify", project)
+    assert verify.returncode == 0, verify.stdout + verify.stderr
+    assert len(list((project / "ascmhl").glob("*.mhl"))) == 1
+
+
+def test_start_now_on_the_supervisor_only_for_a_paused_manual_seal_or_accept(
+    tmp_path: Path,
+) -> None:
+    """D73: ``request_start_now`` refuses another project, a Verify now, an automatic job and a
+    job already flagged; ``notify_job_queued`` also makes yield a paused job flagged in the DB
+    after the hasher took it (a Seal now racing the hasher)."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+    with Database(settings.db_path) as db:
+        sealer.run_scan_cycle(db, settings, now=utcnow())
+        first, second, *_ = db.list_projects()
+        sup = Supervisor(db, SettingsRef(settings), EventBus(db), now_fn=lambda: NOON)
+        assert not sup.gate.is_set()
+        assert not sup.request_start_now(first.id)  # nothing running
+        seal_id = sealer.request_seal(db, first.id, utcnow())
+        seal = db.get_job(seal_id)
+        assert seal is not None
+
+        def current(job: Any) -> None:
+            with sup._lock:
+                sup._current_job = job
+            sup._yield_event.clear()
+
+        for job in (
+            dataclasses.replace(seal, kind=JobKind.VERIFY),  # Verify now: already bypass
+            dataclasses.replace(seal, trigger=Trigger.AUTO),
+            dataclasses.replace(seal, bypass_hours=True),
+        ):
+            current(job)
+            assert not sup.request_start_now(first.id)
+            assert not sup._yield_event.is_set()
+        current(seal)
+        assert not sup.request_start_now(second.id)
+
+        # The hasher took the job just before a Seal now flagged it in the queue.
+        db.set_job_state(seal_id, JobState.RUNNING, NOON)
+        sup.notify_job_queued()
+        assert not sup._yield_event.is_set()
+        assert db.set_job_bypass_hours(seal_id)
+        sup.notify_job_queued()
+        assert sup._yield_event.is_set()
+        sup._yield_event.clear()
+        assert not sup.request_start_now(first.id)  # flagged already in the DB
+        assert not sup._yield_event.is_set()

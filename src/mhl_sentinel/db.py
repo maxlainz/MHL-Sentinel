@@ -747,6 +747,15 @@ class Database:
                     (state.value, error, job_id),
                 )
 
+    def set_job_bypass_hours(self, job_id: int) -> bool:
+        """Let a job run inside working hours (Seal now / Accept now, D73; Verify now is born
+        with it, D63). True if the flag changed, False if it was already set (or no such job)."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "UPDATE jobs SET bypass_hours = 1 WHERE id = ? AND bypass_hours = 0", (job_id,)
+            )
+            return cur.rowcount == 1
+
     def update_job_progress(
         self, job_id: int, files_done: int, files_total: int, bytes_done: int, bytes_total: int
     ) -> None:

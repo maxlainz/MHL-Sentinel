@@ -192,6 +192,8 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         if project.state is ProjectState.NEEDS_REVIEW and not verification
         else []
     )
+    # D73: Seal now / Accept now, only inside working hours (outside them the job already runs).
+    start_now = views.start_now_label(ctx.db, project, settings, utcnow())
     generations = project.last_generation_no
     if history.generations:
         generations = len(history.generations)
@@ -212,6 +214,8 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "job_pct": views.percent(job),
         "can_seal": project.state is ProjectState.UNSEALED,
         "can_cancel": sealer.cancellable_job(ctx.db, project) is not None,
+        "can_start_now": bool(start_now),
+        "start_now_label": start_now,
         "can_review": project.state is ProjectState.NEEDS_REVIEW,
         "can_ignore": project.state
         not in (ProjectState.IGNORED, ProjectState.HASHING, ProjectState.MISSING),
@@ -413,6 +417,32 @@ def project_verify(request: Request, project_id: int) -> Response:
     # goes ahead of everything waiting, after the job that may be running.
     notice = "Verification started." if working else "Verification queued ahead of the rest."
     return _action_response(request, ctx, project_id, notice=notice)
+
+
+@router.post("/projects/{project_id}/start-now", response_class=HTMLResponse)
+def project_start_now(request: Request, project_id: int) -> Response:
+    """Seal now / Accept now (D73): a manual Seal or Accept waiting for the end of the working
+    hours (queued, or running but paused by them) starts at once."""
+    ctx = ctx_of(request)
+    project = _get_project(ctx, project_id)
+    try:
+        if project.state is ProjectState.HASHING:
+            # D57, D73: a running job is the hasher thread's; only the supervisor touches it.
+            job = ctx.db.running_job(project_id)
+            if job is None or not ctx.supervisor.request_start_now(project_id):
+                raise sealer.SealerError("this job cannot be started now")
+        else:
+            job_id = sealer.request_start_now(ctx.db, project_id, utcnow())
+            job = ctx.db.get_job(job_id)
+    except sealer.SealerError as exc:
+        return _action_response(
+            request, ctx, project_id, notice="", error=str(exc), status_code=409
+        )
+    ctx.supervisor.notify_job_queued()
+    accept = job is not None and job.kind is JobKind.ACCEPT_NEW_VERSION
+    return _action_response(
+        request, ctx, project_id, notice="Accept started." if accept else "Sealing started."
+    )
 
 
 @router.get("/projects/{project_id}/history.zip")

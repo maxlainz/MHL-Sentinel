@@ -72,6 +72,7 @@
       {% for r in inbox.moving %}
       {% if r.cancellable %}
       {% call item(r) %}
+        {% if r.start_now %}{{ dlg.start_now(r.view.id, r.start_now, r.size, "#projects", "?from=inbox", "btn small") }}{% endif %}
         <form class="inline" method="post" action="/projects/{{ r.view.id }}/cancel?from=inbox"
               hx-post="/projects/{{ r.view.id }}/cancel?from=inbox" hx-target="#projects" hx-swap="outerHTML">
           <button type="submit" class="btn small quiet">Cancel</button>

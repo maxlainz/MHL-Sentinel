@@ -26,6 +26,7 @@
     {{ act("postpone", "Postpone", "quiet") }}
     {% endif %}
     {% if can_seal %}{{ act("seal", "Seal") }}{% endif %}
+    {% if can_start_now %}{{ dlg.start_now(p.id, start_now_label, p.total_bytes, "#project-card") }}{% endif %}
     {% if can_cancel %}{{ act("cancel", "Cancel", "quiet") }}{% endif %}
     {% if can_retry %}
     {{ act("retry", "Retry", "decide") }}
@@ -45,9 +46,11 @@
     and the saved MHL history; the archive folder itself is not touched.</p>
   {% elif can_cancel and p.state.value == 'hashing' %}
   <p class="footnote">Cancel stops the reading at the next file. Nothing has been written; the
-    files already read are not read again on the next Seal.</p>
+    files already read are not read again on the next Seal.{% if can_start_now %}
+    {{ start_now_label }} starts it at once, during working hours.{% endif %}</p>
   {% elif can_cancel %}
-  <p class="footnote">Cancel takes the request back before it runs. Nothing has been written.</p>
+  <p class="footnote">Cancel takes the request back before it runs. Nothing has been written.{% if can_start_now %}
+    {{ start_now_label }} starts it at once, during working hours.{% endif %}</p>
   {% endif %}
 
   {% if can_review and verification %}

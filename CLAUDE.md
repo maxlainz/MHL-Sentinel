@@ -49,7 +49,7 @@ Makefile · CHANGELOG.md · README.md · .env.example
 ## Docs
 | Archivo | Leer cuando… |
 |---|---|
-| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D71; entrevistas de producto y técnica cerradas) |
+| `docs/decisiones.md` | Antes de tocar arquitectura, alcance, herramientas o workflow (D1–D73; entrevistas de producto y técnica cerradas) |
 | `docs/contexto-archivo.md` | Vas a tocar detección de proyectos, exclusiones, política ante cambios, o necesitas saber qué exige el estudio |
 | `docs/research/asc-mhl-spec-y-referencia.md` | Vas a escribir o leer manifiestos, usar `mhllib`, elegir hash, o dudas de qué hace `ascmhl` ante un cambio |
 | `docs/research/arquitectura-watcher.md` | Vas a tocar scan, scheduler, hasher, GUI, Docker o la DB |
@@ -80,6 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
+- **Estado (2026-10-06, bitácora 11, sin release)**: `Seal now` / `Accept now` arranca ya, con confirmación, un Seal o Accept que espera al fin de la jornada (D73). 470 tests. D1–D73.
 - **Estado (2026-10-06, bitácora 10, `v0.7.2`)**: con `finder_tags` encendido la app es dueña de las etiquetas de Finder de cada carpeta de proyecto: borra las demás y corrige las cambiadas a mano fuera del horario laboral; apagado no toca nada (D72). Base `v0.7.0`: etiquetas por estado, opt-in (D70), formato pendiente de medir en el NAS (#24). 461 tests. D1–D72.
 - **Estado (2026-10-05, bitácora 09, `v0.7.1`)**: mismo código que `v0.7.0`; deja verde la CI de `main` tras el trailer de atribución que entró con el merge del #27 (no se reescribe `main`).
 - **Estado (2026-10-05, bitácora 09, `v0.7.0`)**: etiquetas de Finder por estado en las carpetas de proyecto, opt-in en Ajustes (D70); formato supuesto, pendiente de medir en el NAS (#24). 460 tests. D1–D70. PR #25. Tag `v0.7.0` movido al commit de release por excepción del owner (D71).

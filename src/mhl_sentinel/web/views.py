@@ -17,6 +17,7 @@ from mhl_sentinel.clock import from_iso, utcnow
 from mhl_sentinel.config import Settings
 from mhl_sentinel.db import Database, JobRow, ProjectRow
 from mhl_sentinel.models import ChangeKind, JobKind, JobState, ProjectState, Trigger
+from mhl_sentinel.schedule import WorkingHours
 
 GREEN, AMBER, RED, GREY = "green", "amber", "red", "grey"
 
@@ -54,6 +55,11 @@ JOB_LABEL: dict[JobKind, str] = {
     JobKind.RETIRE: "Forgetting",
 }
 VERIFY_NOW_LABEL = "Verify now"  # D63: a manual verification, also inside working hours
+# D73: a manual Seal or Accept started at once, inside working hours.
+START_NOW_LABEL: dict[JobKind, str] = {
+    JobKind.SEAL: "Seal now",
+    JobKind.ACCEPT_NEW_VERSION: "Accept now",
+}
 
 _UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
@@ -133,6 +139,15 @@ def job_label(job: JobRow) -> str:
     if job.kind is JobKind.VERIFY and job.trigger is Trigger.MANUAL:
         return VERIFY_NOW_LABEL
     return JOB_LABEL.get(job.kind, str(job.kind))
+
+
+def start_now_label(db: Database, project: ProjectRow, settings: Settings, now: datetime) -> str:
+    """``Seal now`` / ``Accept now`` (D73) for a manual Seal or Accept still bound to the working
+    hours, only while they are on; empty when there is no such button."""
+    job = sealer.startable_now_job(db, project)
+    if job is None or not WorkingHours.from_settings(settings).is_working(now):
+        return ""
+    return START_NOW_LABEL[job.kind]
 
 
 def running_job_for(db: Database, project_id: int, current: JobRow | None) -> JobRow | None:
@@ -403,6 +418,8 @@ class InboxRow:
     meta: str = ""  # "142 files · 28.4 GB"
     when: str = ""  # sealed date, for the quiet list
     cancellable: bool = False
+    start_now: str = ""  # D73: "Seal now" / "Accept now", empty without the button
+    size: int | None = None  # bytes, for the start-now confirmation
 
 
 @dataclass(slots=True)
@@ -481,6 +498,9 @@ def inbox(
             box.ignored.append(row)
         else:
             row.cancellable = sealer.cancellable_job(db, p) is not None
+            if row.cancellable and now is not None:
+                row.start_now = start_now_label(db, p, settings, now)
+                row.size = p.total_bytes
             box.moving.append(row)
     # What moves now goes on top: reading files, then queued, then new files settling.
     order = {ProjectState.HASHING.value: 0, ProjectState.QUEUED.value: 1}

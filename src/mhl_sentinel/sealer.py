@@ -716,6 +716,45 @@ def request_cancel(db: Database, project_id: int, now: datetime) -> int:
     return job.id
 
 
+_STARTABLE_NOW = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION})
+
+
+def is_startable_now(job: JobRow) -> bool:
+    """Seal now / Accept now (D73): the owner's own Seal or Accept that still obeys the working
+    hours. A Verify now already runs inside them (D63); automatic jobs never jump the hours."""
+    return is_cancellable(job) and job.kind in _STARTABLE_NOW and not job.bypass_hours
+
+
+def startable_now_job(db: Database, project: ProjectRow) -> JobRow | None:
+    """The job a Seal now / Accept now button would start at once (D73): the project's manual
+    ``seal`` or ``accept_new_version``, queued or running (paused by the working hours), not yet
+    ``bypass_hours``."""
+    job = cancellable_job(db, project)
+    if job is None or not is_startable_now(job):
+        return None
+    return job
+
+
+def request_start_now(db: Database, project_id: int, now: datetime) -> int:
+    """Seal now / Accept now (D73) on a queued manual Seal or Accept: the job gets
+    ``bypass_hours`` (D63) and keeps its place in the queue as ``queued``; the supervisor takes
+    it while the working-hours gate is closed and never pauses it. A running job is only the
+    supervisor's to touch (``Supervisor.request_start_now``), as with Cancel (D57). Returns the
+    job id."""
+    del now
+    project = _require(db, project_id)
+    job = cancellable_job(db, project)
+    if job is None or job.kind not in _STARTABLE_NOW:
+        raise SealerError(f"{project.rel_path}: nothing to start now in state {project.state}")
+    if job.state is not JobState.QUEUED:
+        raise SealerError(f"{project.rel_path}: start a running job through the supervisor")
+    db.set_job_bypass_hours(job.id)
+    log.info(
+        "%s starts now for %s (job %d, working hours skipped)", job.kind, project.rel_path, job.id
+    )
+    return job.id
+
+
 def request_ignore(db: Database, project_id: int, now: datetime) -> None:
     """Ignore button (D19). Queued jobs are cancelled; refused while hashing."""
     project = _require(db, project_id)

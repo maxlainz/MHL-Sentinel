@@ -46,6 +46,8 @@ class FakeSupervisor:
     scans: int = 0
     cancel_ok: bool = True
     cancels: list[int] = field(default_factory=list)
+    start_ok: bool = True
+    starts: list[int] = field(default_factory=list)
 
     def notify_job_queued(self) -> None:
         self.notified = getattr(self, "notified", 0) + 1
@@ -56,6 +58,10 @@ class FakeSupervisor:
     def request_cancel(self, project_id: int) -> bool:
         self.cancels.append(project_id)
         return self.cancel_ok
+
+    def request_start_now(self, project_id: int) -> bool:
+        self.starts.append(project_id)
+        return self.start_ok
 
     def status(self) -> FakeStatus:
         return self.state
@@ -839,6 +845,97 @@ def test_verify_now_only_for_sealed(env: Env) -> None:
     pid = env.ids["unsealed"]
     assert "Verify now" not in env.client.get(f"/projects/{pid}").text
     assert env.client.post(f"/projects/{pid}/verify", headers=HX).status_code == 409
+
+
+WORKING = datetime(2026, 10, 1, 10, 0, tzinfo=UTC)  # 12:00 in Madrid, a Thursday
+
+
+def test_seal_now_only_inside_working_hours(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D73: a queued Seal offers Seal now only while the working hours hold it back."""
+    monkeypatch.setattr(routes, "utcnow", lambda: NOW)  # 00:00 Madrid: the job runs anyway
+    pid = env.ids["unsealed"]
+    env.db.update_project_fields(pid, total_bytes=12 * GB)
+    r = env.client.post(f"/projects/{pid}/seal", headers=HX)
+    assert r.status_code == 200 and "Seal now" not in r.text and "/start-now" not in r.text
+    assert "/start-now" not in env.client.get("/").text
+
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert f'data-dialog-open="start-{pid}"' in card
+    assert "Seal during working hours?" in card
+    assert "Seal now reads 12.0 GB from the NAS during working hours" in card
+    assert "Seal now starts it at once, during working hours." in card
+    assert (
+        f'<noscript><form class="inline" method="post" action="/projects/{pid}/start-now">' in card
+    )
+    inbox = re.sub(r"\s+", " ", env.client.get("/").text)
+    assert f'hx-post="/projects/{pid}/start-now?from=inbox"' in inbox
+    assert 'class="btn small" data-dialog-open' in inbox
+
+    r = env.client.post(f"/projects/{pid}/start-now?from=inbox", headers=HX)
+    assert r.status_code == 200 and "2025-03_CLIENTE-NUEVO: Sealing started." in r.text
+    assert "/start-now" not in r.text and f"/projects/{pid}/cancel?from=inbox" in r.text
+    assert getattr(env.sup, "notified", 0) >= 2
+    job = env.db.queued_job(pid)
+    assert job is not None and job.kind is JobKind.SEAL and job.bypass_hours
+    card = env.client.get(f"/projects/{pid}").text
+    assert "Seal now" not in card and "/cancel" in card  # started: Cancel only
+    assert env.sup.starts == []  # queued: the sealer flags it, not the supervisor
+
+
+def test_accept_now_in_working_hours(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    pid = env.ids["needs_review"]
+    env.client.post(f"/projects/{pid}/accept", headers=HX)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert "Accept during working hours?" in card
+    assert "Accept now reads 3.0 GB from the NAS during working hours" in card
+    assert "Accept now starts it at once, during working hours." in card
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 200 and "Accept started." in r.text and "Accept now" not in r.text
+    job = env.db.queued_job(pid)
+    assert job is not None and job.kind is JobKind.ACCEPT_NEW_VERSION and job.bypass_hours
+
+
+def test_seal_now_on_a_paused_seal_goes_through_the_supervisor(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D73: a Seal running but paused by the working hours is the hasher thread's."""
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    pid = env.ids["unsealed"]
+    job_id = env.db.enqueue_job(JobKind.SEAL, pid, Trigger.MANUAL, 130, NOW)
+    env.db.set_job_state(job_id, JobState.RUNNING, NOW)
+    env.db.set_state(pid, ProjectState.HASHING)
+    env.sup.state = FakeStatus(
+        working_now=True, gate_open=False, current_job=env.db.get_job(job_id)
+    )
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert f'data-dialog-open="start-{pid}"' in card and "at the next file" in card
+    assert "Seal now starts it at once, during working hours." in card
+    assert f'hx-post="/projects/{pid}/start-now?from=inbox"' in env.client.get("/").text
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 200 and "Sealing started." in r.text
+    assert env.sup.starts == [pid]
+    env.sup.start_ok = False  # e.g. the job ended or was flagged in the meantime
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 409 and "cannot be started now" in r.text
+    env.sup.start_ok = True
+    env.db.set_job_state(job_id, JobState.DONE, NOW)  # hashing, but no running job left
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 409 and env.sup.starts == [pid, pid]
+
+
+def test_no_seal_now_without_a_manual_seal_or_accept(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    pid = env.ids["unsealed"]
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 409 and "nothing to start now" in r.text
+    sealed = env.ids["sealed"]
+    env.client.post(f"/projects/{sealed}/verify", headers=HX)  # a Verify now already runs
+    assert "/start-now" not in env.client.get(f"/projects/{sealed}").text
+    assert "/start-now" not in env.client.get("/").text
 
 
 def test_api_projects_carries_missing_since(env: Env) -> None:
