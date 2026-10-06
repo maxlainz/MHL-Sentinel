@@ -421,5 +421,21 @@ Sealing
 
 ---
 
+## D75 — Panel «What's archived» en la ficha de proyecto
+- **Contexto**: el owner pide más información de qué hay archivado al entrar en la ficha de un proyecto; hoy solo enseña el estado y la lista de generaciones (fecha, ficheros, herramienta).
+- **Opciones**: bloques (1) resumen y fechas, (2) desglose por carpeta de primer nivel, (3) recuento por extensión, (4) cambios por generación; lista de ficheros (a) plegable con buscador, (b) igual más descarga CSV, (c) sin lista.
+- **Elección**: del owner, (1)+(2)+(3)+(4)+(a). Panel «What's archived» entre la tarjeta y el historial: ficheros, tamaño, fecha de sellado, última verificación y la próxima aproximada (`verify_interval_days`, D23); por carpeta de primer nivel, ficheros, tamaño y barra proporcional; recuento por extensión; lista de ficheros plegable, cerrada por defecto, con ruta, tamaño y xxh128 y filtro por nombre en el navegador. Todo sale de `sealed_files` en la DB: abrir la ficha no lee el NAS más que hoy. En el historial, cada generación dice cuántos ficheros nuevos, modificados y borrados trae respecto a la anterior, calculado de la lectura del historial que ya se hace.
+- 2026-10-06.
+
+---
+
+## D76 — Portada: buscador siempre visible y sellados por fecha
+- **Contexto**: el owner pide un buscador en la portada y otro orden: por sellar, cola y sellados ordenados por fecha. Hasta ahora los sellados vivían plegados en «All projects», por nombre, con el filtro dentro del plegable.
+- **Opciones**: buscador (1) que filtra todas las secciones en su sitio o (2) que las sustituye por una lista plana de resultados; sellados (a) más reciente primero o (b) más antiguo primero; «Needs your decision» (i) arriba del todo o (ii) tras la cola.
+- **Elección**: del owner, (1)+(a)+(i). Orden: Needs your decision (solo si hay algo) → Not sealed yet → Queue (antes «In progress», mismo orden interno) → Sealed, por `last_sealed_at` descendente, los primeros visibles y el resto en un plegable → línea final con la próxima verificación y el recuento, con los ignorados plegados. Un buscador siempre visible encima filtra por nombre en el navegador todas las secciones (incluidos los ignorados), abre los plegables con coincidencias y oculta las secciones vacías. Sin endpoint nuevo.
+- 2026-10-06.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

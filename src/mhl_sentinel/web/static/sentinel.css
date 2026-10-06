@@ -236,13 +236,12 @@ form.inline { display: inline; margin: 0; }
 @keyframes breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .light.pulse-anim, .timeline li.running::before { animation: none; } }
 
-/* --- all quiet ------------------------------------------------------------------------------- */
-.allquiet { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-         box-shadow: var(--shadow); padding: 18px 20px; }
-.allquiet p { margin: 0; color: var(--ink-2); }
-.allquiet p.big { color: var(--ink); font-size: 17px; font-weight: 500; margin: 0 0 4px;
-               display: flex; gap: 10px; align-items: center; }
-.allquiet p.big strong { font-weight: 600; }
+/* --- search and closing line (D76) -------------------------------------------------------------- */
+.filter.search { max-width: none; margin: 0 0 28px; padding: 10px 14px; }
+.closing-text p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.closing-text p.big { color: var(--ink); font-size: 17px; font-weight: 500; margin-bottom: 4px; }
+.closing .fold { margin-top: 8px; }
+
 details > summary { cursor: pointer; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "›"; display: inline-block; width: 1em; color: var(--ink-3);

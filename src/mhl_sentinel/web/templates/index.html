@@ -11,6 +11,9 @@
   {% include "_header.html" %}
   <div class="layout">
     <main>
+      <input class="filter search" id="project-search" type="search" placeholder="Search projects"
+             aria-label="Search projects" autocomplete="off">
+      <p class="hint" id="no-match" hidden>No project matches.</p>
       {% include "_projects.html" %}
       {% if strays %}
       <section class="section">

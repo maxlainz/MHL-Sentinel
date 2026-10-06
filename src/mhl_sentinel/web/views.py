@@ -566,8 +566,8 @@ def archive_panel(
 
 
 # --- inbox model (issue #5, proposal D) ------------------------------------------------------
-# The main screen is an inbox: what needs a decision, what is not sealed yet, what is moving, and
-# everything else folded into one calm "all quiet" line.
+# The main screen is an inbox: what needs a decision, what is not sealed yet, the queue, then the
+# sealed projects newest first (D76) and a closing line.
 
 
 @dataclass(slots=True)
@@ -596,7 +596,7 @@ class Inbox:
     working: bool = False  # inside working hours now: the dialogs warn about the NAS load
 
 
-INBOX_PREVIEW = 6  # unsealed rows shown before "show N more"
+INBOX_PREVIEW = 6  # unsealed and sealed rows shown before "show N more"
 
 
 def _meta(project: ProjectRow, tz: ZoneInfo | None = None) -> str:
@@ -672,6 +672,12 @@ def inbox(
     # What moves now goes on top: reading files, then queued, then new files settling.
     order = {ProjectState.HASHING.value: 0, ProjectState.QUEUED.value: 1}
     box.moving.sort(key=lambda r: (order.get(r.view.state, 2), r.view.name))
+    # D76: sealed, newest seal first; same day by name; no date last.
+    dated = {p.id: _as_utc(p.last_sealed_at) for p in projects}
+    box.quiet.sort(key=lambda r: r.view.name)
+    box.quiet.sort(
+        key=lambda r: d.timestamp() if (d := dated[r.view.id]) else float("-inf"), reverse=True
+    )
     return box
 
 
