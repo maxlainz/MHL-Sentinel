@@ -7,5 +7,8 @@
 - D76: orden Needs your decision → Not sealed yet → Queue → Sealed (por fecha) → línea final con ignorados plegados; buscador fuera del fragmento que refresca SSE.
 - Sin comprobar en un navegador: el CSS y el JS del buscador no tienen tests.
 
+## Release
+`v0.9.0` (PR #34 y el de release). Sin conceptos nuevos para el vault: son cambios de GUI.
+
 ## Siguiente paso
-Mirar ambas pantallas en el navegador antes de integrar el PR; luego release `v0.9.0`.
+Comprobar que Watchtower sube `v0.9.0` y mirar ambas pantallas en el navegador con el archivo real.
