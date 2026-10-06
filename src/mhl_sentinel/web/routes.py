@@ -132,11 +132,7 @@ def header_context(ctx: WebContext) -> dict[str, Any]:
         if project is not None:
             job_text += " " + project.name
         job_pct = views.percent(fresh)
-    projects = ctx.db.list_projects()
-    counters = views.counters(projects, status.queued_jobs)
     return {
-        "headline": views.headline(projects, status.archive_reachable),
-        "counters": counters,
         "archive_ok": status.archive_reachable,
         "working_now": status.working_now,
         "gate_open": status.gate_open,
@@ -154,10 +150,10 @@ def projects_context(ctx: WebContext) -> dict[str, Any]:
     settings = ctx.settings
     status = ctx.supervisor.status()
     projects = ctx.db.list_projects()
+    box = views.inbox(ctx.db, projects, settings, status.current_job, utcnow())
     return {
-        "inbox": views.inbox(ctx.db, projects, settings, status.current_job, utcnow()),
+        "inbox": box,
         "preview": views.INBOX_PREVIEW,
-        "counters": views.counters(projects, status.queued_jobs),
         "archive_ok": status.archive_reachable,
     }
 
@@ -264,6 +260,7 @@ def index(request: Request) -> Response:
         **activity_context(ctx),
         **header_context(ctx),
         **projects_context(ctx),
+        "sentence": views.context_sentence(ctx.db.list_projects()),
         "notice": f"{retired} forgotten" if retired else "",
         "strays": strays[:MAX_STRAYS_SHOWN],
         "strays_more": max(0, len(strays) - MAX_STRAYS_SHOWN),
@@ -274,6 +271,18 @@ def index(request: Request) -> Response:
 @router.get("/fragments/header", response_class=HTMLResponse)
 def fragment_header(request: Request) -> Response:
     return templates.TemplateResponse(request, "_header.html", header_context(ctx_of(request)))
+
+
+@router.get("/fragments/context", response_class=HTMLResponse)
+def fragment_context(request: Request) -> Response:
+    ctx = ctx_of(request)
+    sentence = views.context_sentence(ctx.db.list_projects())
+    return templates.TemplateResponse(request, "_context.html", {"sentence": sentence})
+
+
+@router.get("/fragments/alerts", response_class=HTMLResponse)
+def fragment_alerts(request: Request) -> Response:
+    return templates.TemplateResponse(request, "_alerts.html", header_context(ctx_of(request)))
 
 
 @router.get("/fragments/projects", response_class=HTMLResponse)
@@ -290,7 +299,7 @@ def fragment_activity(request: Request) -> Response:
 def project_detail(request: Request, project_id: int) -> Response:
     ctx = ctx_of(request)
     project = _get_project(ctx, project_id)
-    context = project_context(ctx, project, with_history=True)
+    context = {**header_context(ctx), **project_context(ctx, project, with_history=True)}
     return templates.TemplateResponse(request, "project.html", context)
 
 
@@ -366,7 +375,7 @@ def _action_response(
         response = templates.TemplateResponse(
             request, "_project_card.html", context, status_code=status_code
         )
-    # The buttons do not publish bus events: tell the headline and the activity log to refresh.
+    # The buttons do not publish bus events: tell the status bar and the activity log to refresh.
     response.headers["HX-Trigger"] = "inbox-changed"
     return response
 
@@ -531,16 +540,18 @@ async def scan_now(request: Request) -> Response:
     if not is_htmx(request):
         return RedirectResponse("/", status_code=303)
     context = header_context(ctx)
-    context["notice"] = "Scan requested: the list refreshes in a moment."
-    return templates.TemplateResponse(request, "_header.html", context)
+    context["bar_notice"] = "Scan requested: the list refreshes in a moment."
+    return templates.TemplateResponse(request, "_alerts.html", context)
 
 
 # --- settings (D25, D45) ---------------------------------------------------------------------
 
 
 def _settings_page(request: Request, state: settings_form.FormState, code: int = 200) -> Response:
-    settings = ctx_of(request).settings
+    ctx = ctx_of(request)
+    settings = ctx.settings
     context = {
+        **header_context(ctx),
         "form": state,
         "s": settings,
         "days": settings_form.DAY_LABELS,

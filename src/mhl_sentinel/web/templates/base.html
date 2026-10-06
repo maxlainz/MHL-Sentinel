@@ -12,15 +12,19 @@
   <script src="/static/htmx-ext-sse.js" defer></script>
   <script src="/static/sentinel.js" defer></script>
 </head>
-<body>
-  <div class="page">
-    <header class="topbar">
+<body hx-ext="sse" sse-connect="/events">
+  <header class="appbar">
+    <div class="appbar-in">
       <a class="brand" href="/">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5 3 4.5v5c0 4.2 3 7.6 7 9 4-1.4 7-4.8 7-9v-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m6.8 10 2.2 2.2 4.2-4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         MHL Sentinel
       </a>
+      {% include "_header.html" %}
       <nav>{% block nav %}{% endblock %}</nav>
-    </header>
+    </div>
+    {% include "_alerts.html" %}
+  </header>
+  <div class="page">
     {% block content %}{% endblock %}
     <footer class="foot">MHL Sentinel · ASC MHL manifests for the finished projects of the archive</footer>
   </div>

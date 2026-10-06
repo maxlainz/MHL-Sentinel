@@ -1,0 +1,9 @@
+<div id="status-alerts" class="alerts"
+     hx-get="/fragments/alerts" hx-swap="outerHTML"
+     hx-trigger="sse:cycle.finished, sse:archive.unreachable, sse:archive.ok">
+  {% if not archive_ok %}
+  <p class="strip" role="alert">The archive share is not answering. Nothing is read or written until it is
+    back; the app keeps trying every round. The lists below are what it knew last.</p>
+  {% endif %}
+  {% if bar_notice %}<p class="bar-notice" role="status">{{ bar_notice }}</p>{% endif %}
+</div>

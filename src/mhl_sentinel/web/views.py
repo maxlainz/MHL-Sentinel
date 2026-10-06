@@ -573,7 +573,8 @@ def archive_panel(
 @dataclass(slots=True)
 class InboxRow:
     view: ProjectView
-    meta: str = ""  # "142 files · 28.4 GB"
+    meta: str = ""  # "142 files"; the size goes in its own column
+    size_text: str = ""  # "28.4 GB", right-aligned column (D77)
     when: str = ""  # sealed date, for the quiet list
     cancellable: bool = False
     start_now: str = ""  # D73, D74: "Seal now" / "Accept now" / "Update now", or no button
@@ -605,8 +606,6 @@ def _meta(project: ProjectRow, tz: ZoneInfo | None = None) -> str:
         parts.append(f"sealed {fmt_date(project.last_sealed_at, tz)}")
     if project.file_count is not None:
         parts.append(f"{project.file_count} file{'' if project.file_count == 1 else 's'}")
-    if project.total_bytes is not None:
-        parts.append(human_size(project.total_bytes))
     if project.state is ProjectState.MISSING and tz is not None and project.last_verified_at:
         parts.append(f"verified OK {fmt_date(project.last_verified_at, tz)}")
     return " · ".join(parts)
@@ -650,7 +649,9 @@ def inbox(
     box.working = WorkingHours.from_settings(settings).is_working(now)
     tz = settings.tzinfo
     for p in sorted_projects(projects):
-        row = InboxRow(project_view(db, p, settings, current), _meta(p, tz))
+        size_text = human_size(p.total_bytes) if p.total_bytes is not None else ""
+        view = project_view(db, p, settings, current)
+        row = InboxRow(view, _meta(p, tz), size_text=size_text)
         state = p.state
         if state in (ProjectState.NEEDS_REVIEW, ProjectState.ERROR, ProjectState.MISSING):
             box.decide.append(row)
@@ -725,43 +726,38 @@ def detail_sentence(db: Database, project: ProjectRow, settings: Settings) -> st
     return f"Something went wrong: {project.error or 'unknown error'}. The app retries next round."
 
 
-@dataclass(slots=True)
-class Headline:
-    tone: str  # "alert" (red), "wait" (amber) or "calm"
-    text: str
-
-
 def _n(count: int, one: str, many: str) -> str:
     return f"1 {one}" if count == 1 else f"{count} {many}"
 
 
-def headline(projects: list[ProjectRow], archive_ok: bool) -> Headline:
-    """The one sentence at the top of the main screen. "Every project is sealed" only when
-    every watched project really is ``sealed``; anything moving keeps the amber tone."""
-    if not archive_ok:
-        return Headline("alert", "The archive is not reachable.")
+def context_sentence(projects: list[ProjectRow]) -> str:
+    """The sentence under the "Projects" title (D77): how many folders are watched and how they
+    split into the four groups of the inbox. Zero groups are left out; ignored ones are only
+    mentioned. Counted from the states, so it is cheap to refresh on every event."""
     states = Counter(p.state for p in projects)
-    missing = states[ProjectState.MISSING]
-    decide = states[ProjectState.NEEDS_REVIEW] + states[ProjectState.ERROR] + missing
-    if decide and decide == missing:
-        text = _n(missing, "project is", "projects are") + " missing from the disk."
-        return Headline("alert", text)
+    ignored = states[ProjectState.IGNORED]
+    decide = states[ProjectState.NEEDS_REVIEW] + states[ProjectState.ERROR]
+    decide += states[ProjectState.MISSING]
+    unsealed, sealed = states[ProjectState.UNSEALED], states[ProjectState.SEALED]
+    total = len(projects) - ignored
+    queued = total - decide - unsealed - sealed
+    if total == 0 and ignored == 0:
+        return "No projects found yet. The first round lists them."
+    if total == 0:
+        return f"Every project is ignored: {ignored} in all. Open one to watch it again."
+    groups = []
     if decide:
-        return Headline("alert", _n(decide, "project needs", "projects need") + " your decision.")
-    if states[ProjectState.UNSEALED]:
-        text = _n(states[ProjectState.UNSEALED], "project is", "projects are") + " not sealed yet."
-        return Headline("wait", text)
-    sealing = states[ProjectState.QUEUED] + states[ProjectState.HASHING]
-    if sealing:
-        return Headline("wait", _n(sealing, "project is", "projects are") + " being sealed.")
-    if states[ProjectState.CHANGED]:
-        text = _n(states[ProjectState.CHANGED], "project has", "projects have")
-        return Headline("wait", text + " new files waiting to be added.")
-    if states[ProjectState.SEALED]:
-        return Headline("calm", "All quiet. Every project is sealed.")
-    if states[ProjectState.IGNORED]:
-        return Headline("calm", "Every project is ignored.")
-    return Headline("calm", "No projects found yet.")
+        groups.append(f"{decide} {'needs' if decide == 1 else 'need'} a decision")
+    if unsealed:
+        groups.append(f"{unsealed} {'is' if unsealed == 1 else 'are'} not sealed yet")
+    if queued:
+        groups.append(f"{queued} {'is' if queued == 1 else 'are'} in the queue")
+    if sealed:
+        groups.append(f"{sealed} {'is' if sealed == 1 else 'are'} sealed")
+    if ignored:
+        groups.append(f"{ignored} {'is' if ignored == 1 else 'are'} ignored")
+    watched = f"{total} project folder{'' if total == 1 else 's'}"
+    return f"{watched} watched in the archive. {', '.join(groups)}."
 
 
 @dataclass(slots=True)

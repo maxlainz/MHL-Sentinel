@@ -437,5 +437,12 @@ Sealing
 
 ---
 
+## D77 — Portada pulida: estado en la barra fija, buscador con botón y secciones con jerarquía
+- **Contexto**: con D76 en el navegador el owner ve la portada poco clara: buscador a ancho completo sin botón, poca jerarquía, sin contexto. Pide pulir y propuestas; se le enseña una maqueta navegable con dos variantes: (A) estado en la barra superior fija, (B) frase de estado como título y una banda de cuatro cifras que filtran.
+- **Elección**: del owner, (A). La barra superior queda fija al hacer scroll y lleva el estado: archivo OK o no accesible (pastilla verde o roja), horario (dentro o fuera, hasta qué hora), última pasada y, si hay, el trabajo en marcha con su porcentaje; si el archivo no responde, una franja roja con la explicación bajo la barra. Desaparece el bloque grande de estado. La página abre con el título «Projects» y una frase con el recuento de cada grupo. Buscador de ancho medio con botón «Search» a la derecha y una nota que dice qué busca y cuántos resultados hay; debajo, pastillas por grupo (All, Needs decision, Not sealed, Queue, Sealed) con su número que muestran un solo grupo. Cada sección lleva título, número y a la derecha para qué sirve; las filas van en columnas (punto de estado, nombre y carpeta con el estado debajo, tamaño o fecha, botón). El orden de D76 se mantiene.
+- 2026-10-06.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

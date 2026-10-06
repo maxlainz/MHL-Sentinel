@@ -70,38 +70,99 @@
     });
   }
 
-  // Main-screen search (D76). The input lives outside the #projects fragment, so SSE refreshes
-  // never wipe it; the query is re-applied after every swap. Folds with a match are forced open
-  // (data-forced) and go back to their remembered state when the query is cleared.
+  // Main-screen search and group chips (D76, D77). The input lives outside the #projects
+  // fragment, so SSE refreshes never wipe it; the query and the chosen chip are re-applied after
+  // every swap. The chips are rendered inside the fragment (their counts are fresh after each
+  // swap). Folds with something to show are forced open (data-forced) while a query or a chip is
+  // active and go back to their remembered state when both are cleared.
+  var CHIP_KEY = "sentinel.chip";
+  var chip = "all";
+  try { chip = window.localStorage.getItem(CHIP_KEY) || "all"; } catch (err) { chip = "all"; }
+
+  function setChip(value) {
+    chip = value;
+    try { window.localStorage.setItem(CHIP_KEY, value); } catch (err) { /* storage unavailable */ }
+  }
+
   function applySearch() {
     var input = document.getElementById("project-search");
     var proj = document.getElementById("projects");
     if (!input || !proj) return;
     var q = input.value.trim().toLowerCase();
-    var rows = proj.querySelectorAll("li[data-name]");
+    // A remembered chip whose group is now empty (no chip rendered) falls back to All.
+    var chips = proj.querySelectorAll("[data-chip]");
+    var known = Array.prototype.some.call(chips, function (c) { return c.dataset.chip === chip; });
+    var active = known ? chip : "all";
+    chips.forEach(function (c) {
+      c.setAttribute("aria-pressed", c.dataset.chip === active ? "true" : "false");
+    });
+    var forced = q !== "" || active !== "all";
     var shown = 0;
-    rows.forEach(function (li) {
-      var hit = q === "" || li.dataset.name.toLowerCase().indexOf(q) !== -1;
-      li.hidden = !hit;
-      if (hit) shown++;
+    proj.querySelectorAll("section.section[data-group]").forEach(function (sec) {
+      var inScope = active === "all" || sec.dataset.group === active;
+      var visible = 0;
+      sec.querySelectorAll("li[data-name]").forEach(function (li) {
+        var hit = q === "" || li.dataset.name.toLowerCase().indexOf(q) !== -1;
+        li.hidden = !hit;
+        if (hit) visible++;
+      });
+      sec.querySelectorAll("details.fold").forEach(function (d) {
+        var match = forced && d.querySelector("li[data-name]:not([hidden])") !== null;
+        d.hidden = q !== "" && !match;
+        if (match && !d.open) { d.open = true; d.dataset.forced = "1"; }
+        if (!match && d.dataset.forced) { d.open = false; delete d.dataset.forced; }
+      });
+      var n = sec.querySelector(".sec-head .count");
+      if (n) {
+        if (!n.dataset.total) n.dataset.total = n.textContent;
+        n.textContent = q === "" ? n.dataset.total : visible + " of " + n.dataset.total;
+      }
+      sec.hidden = !inScope || (q !== "" && visible === 0);
+      if (inScope) shown += visible;
     });
-    proj.querySelectorAll("details.fold").forEach(function (d) {
-      var match = q !== "" && d.querySelector("li[data-name]:not([hidden])") !== null;
-      d.hidden = q !== "" && !match;
-      if (match && !d.open) { d.open = true; d.dataset.forced = "1"; }
-      if (!match && d.dataset.forced) { d.open = false; delete d.dataset.forced; }
-    });
-    proj.querySelectorAll("section.section").forEach(function (sec) {
-      if (q === "") { sec.hidden = false; return; }
-      sec.hidden = sec.querySelector("li[data-name]:not([hidden])") === null;
-    });
-    proj.querySelectorAll(".hint, .closing-text").forEach(function (p) { p.hidden = q !== ""; });
+    // The closing line and the ignored fold: only on All; the ignored ones are searchable.
+    var closing = proj.querySelector("section.closing");
+    if (closing) {
+      var text = closing.querySelector(".closing-text");
+      if (text) text.hidden = forced;
+      closing.querySelectorAll("details.fold").forEach(function (d) {
+        var any = 0;
+        d.querySelectorAll("li[data-name]").forEach(function (li) {
+          var hit = q === "" || li.dataset.name.toLowerCase().indexOf(q) !== -1;
+          li.hidden = !hit;
+          if (hit) any++;
+        });
+        var match = q !== "" && any > 0;
+        d.hidden = q !== "" && !match;
+        if (match && !d.open) { d.open = true; d.dataset.forced = "1"; }
+        if (!match && d.dataset.forced) { d.open = false; delete d.dataset.forced; }
+        if (active === "all") shown += q === "" ? 0 : any;
+      });
+      closing.hidden = active !== "all" || (q !== "" && closing.querySelector("li[data-name]:not([hidden])") === null);
+    }
     var none = document.getElementById("no-match");
     if (none) none.hidden = q === "" || shown > 0;
+    var note = document.getElementById("search-note");
+    if (note) {
+      note.textContent = q === "" ? note.dataset.idle :
+        shown + " match" + (shown === 1 ? "" : "es") + " \u00b7 Esc clears";
+    }
   }
 
   document.addEventListener("input", function (e) {
     if (e.target && e.target.id === "project-search") applySearch();
+  });
+  document.addEventListener("submit", function (e) {
+    if (e.target && e.target.id === "search-form") {
+      e.preventDefault(); // no request: the list filters in the browser
+      applySearch();
+    }
+  });
+  document.addEventListener("click", function (e) {
+    var t = e.target instanceof Element ? e.target.closest("[data-chip]") : null;
+    if (!t) return;
+    setChip(t.dataset.chip);
+    applySearch();
   });
   document.addEventListener("keydown", function (e) {
     if (e.key === "Escape" && e.target && e.target.id === "project-search") {
