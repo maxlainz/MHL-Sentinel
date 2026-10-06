@@ -4,6 +4,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-06 — Portada pulida
+
 ### Cambiado
 - Portada pulida (D77): el estado pasa a una barra superior fija, en todas las pantallas (pastilla «Archive OK» o «Archive not reachable», horario laboral con «hasta HH:MM», última ronda y, si hay, el trabajo en marcha con su porcentaje; la fecha de la raíz queda como tooltip de «Last round»); si el archivo no responde, una franja roja bajo la barra. Desaparece el bloque grande de estado.
 - Portada: título «Projects» con una frase de recuento por grupo, buscador de ancho medio con botón «Search» y nota de resultados, y pastillas por grupo (All, Needs decision, Not sealed, Queue, Sealed) que muestran un solo grupo y recuerdan la elección. Cada sección lleva a la derecha para qué sirve y las filas van en columnas (estado, nombre y carpeta con el estado debajo, tamaño, botón).
