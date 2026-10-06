@@ -1,6 +1,6 @@
-# 11 — `Seal now` / `Accept now` (2026-10-06)
+# 11 — `Seal now` y paridad de «ahora» (2026-10-06)
 
-**TL;DR**: un `Seal` o `Accept as new version` que espera a que acabe la jornada se puede arrancar ya con `Seal now` / `Accept now`, en la ficha y en la Bandeja, tras confirmar los GB que se van a leer del NAS. Reutiliza el `bypass_hours` de `Verify now` (D63). Decisiones D73 y D74.
+**TL;DR**: un `Seal` o `Accept as new version` que espera a que acabe la jornada se puede arrancar ya con `Seal now` / `Accept now`, en la ficha y en la Bandeja, tras confirmar los GB que se van a leer del NAS. Reutiliza el `bypass_hours` de `Verify now` (D63). Decisiones D73 y D74. Publicado como `v0.8.0`.
 
 ## Qué se hizo
 - Entrevista: el botón aparece solo en el proyecto en cola (o en marcha y pausado por el horario), junto a `Cancel`; pide confirmación con el tamaño; vale también para `Accept`.
