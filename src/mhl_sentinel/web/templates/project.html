@@ -6,6 +6,44 @@
   <p><a class="back" href="/">← Inbox</a></p>
   {% include "_project_card.html" %}
 
+  {% if archive %}
+  <section class="panel archived" id="archived">
+    <h2 class="label">What's archived</h2>
+    <p class="arch-summary">{{ archive.summary }}</p>
+    <p class="hint arch-verified">{{ archive.verified }}</p>
+
+    <div class="scroll">
+    <table class="changes folders">
+      <thead><tr><th>Folder</th><th>Files</th><th>Size</th><th></th></tr></thead>
+      <tbody>
+        {% for f in archive.folders %}
+        <tr data-folder="{{ f.name }}"><td class="path">{{ f.name }}</td><td>{{ f.files }}</td><td>{{ f.size }}</td>
+          <td class="barcell"><span class="bar"><i style="width: {{ f.pct }}%"></i></span></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+
+    <p class="hint arch-types">Types: {{ archive.types }}</p>
+
+    <details class="fold" id="fold-files">
+      <summary>Show all {{ archive.files|length }} files</summary>
+      <input class="filter" id="filter-files" type="search" placeholder="Filter by path" aria-label="Filter files"
+             data-filter="archived-files" hidden>
+      <div class="scroll">
+      <table class="changes files" id="archived-files">
+        <thead><tr><th>Path</th><th>Size</th><th>xxh128</th></tr></thead>
+        <tbody>
+          {% for f in archive.files %}
+          <tr data-name="{{ f.path }}"><td class="path">{{ f.path }}</td><td>{{ f.size }}</td><td class="hash" title="{{ f.hash_full }}">{{ f.hash_short }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </details>
+  </section>
+  {% endif %}
+
   <section class="panel">
     <h2 class="label">Manifest history</h2>
     {% if history.error %}
@@ -15,7 +53,7 @@
       {% for g in history.generations|reverse %}
       <li data-generation="{{ g.number }}">
         <span class="gen">Generation {{ g.number }}{% if loop.first %}<small>current</small>{% endif %}</span>
-        <span class="info"><span class="created">{{ g.created }}</span> · <span class="files">{{ g.files }}</span> file{{ '' if g.files == 1 else 's' }}{% if g.tool %} · {{ g.tool }}{% endif %}</span>
+        <span class="info"><span class="created">{{ g.created }}</span> · <span class="files">{{ g.files }}</span> file{{ '' if g.files == 1 else 's' }}{% if g.tool %} · {{ g.tool }}{% endif %}{% if g.changes %} · <span class="changes-note">{{ g.changes }}</span>{% endif %}</span>
       </li>
       {% endfor %}
     </ol>

@@ -211,6 +211,7 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "last_scan": views.fmt_datetime(project.last_scan_at, tz),
         "generation_count": generations,
         "history": history,
+        "archive": views.archive_panel(ctx.db, project, settings, now),
         "review": review,
         "verification": views.verify_view(ctx.db, project, tz) if verification else None,
         "job": job,

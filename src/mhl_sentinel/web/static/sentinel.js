@@ -53,7 +53,7 @@
     }
   });
 
-  // Type-to-filter on the folded "all projects" list.
+  // Type-to-filter on the folded "all projects" list and on the archived files list (D75).
   function wireFilters(root) {
     root.querySelectorAll("[data-filter]").forEach(function (input) {
       if (input.dataset.wired) return;
@@ -63,7 +63,7 @@
       if (!list) return;
       input.addEventListener("input", function () {
         var q = input.value.trim().toLowerCase();
-        list.querySelectorAll("li[data-name]").forEach(function (li) {
+        list.querySelectorAll("li[data-name], tr[data-name]").forEach(function (li) {
           li.hidden = q !== "" && li.dataset.name.toLowerCase().indexOf(q) === -1;
         });
       });

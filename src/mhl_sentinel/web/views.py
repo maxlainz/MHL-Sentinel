@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from zoneinfo import ZoneInfo
 
 from mhl_sentinel import sealer
@@ -398,6 +398,7 @@ class GenerationView:
     created: str
     files: int
     tool: str
+    changes: str = ""  # D75: "+12 new · 1 modified"; empty for the first generation
 
 
 @dataclass(slots=True)
@@ -406,10 +407,22 @@ class History:
     error: str | None = None
 
 
+def _changes_text(new: int, modified: int, removed: int) -> str:
+    parts = [
+        text for count, text in ((new, f"+{new} new"), (modified, f"{modified} modified")) if count
+    ]
+    if removed:
+        parts.append(f"{removed} removed")
+    return " · ".join(parts) or "no changes"
+
+
 def load_history(project_root: Path, tz: ZoneInfo) -> History:
     """Generations of ``<project>/ascmhl/`` through the reference (``MHLHistory``).
 
-    Any exception (broken chain, unreadable share) becomes a readable message.
+    Any exception (broken chain, unreadable share) becomes a readable message. D75: each later
+    generation also says how many files it adds, changes or drops, from the same read. A full
+    generation lists every file and directory (``is_directory`` entries); an append generation
+    (D48) lists only the new files and no directories, so it can never say "removed".
     """
     if not (project_root / "ascmhl").is_dir():
         return History()
@@ -418,16 +431,138 @@ def load_history(project_root: Path, tz: ZoneInfo) -> History:
 
         history = MHLHistory.load_from_path(str(project_root))
         out: list[GenerationView] = []
+        known: dict[str, dict[str, str]] = {}  # path -> {format: hash} as of the last generation
         for hash_list in history.hash_lists:
             info = hash_list.creator_info
             created = fmt_datetime(getattr(info, "creation_date", None), tz)
             tool_info = getattr(info, "tool", None)
             tool = getattr(tool_info, "name", "") or ""
-            files = sum(1 for mh in hash_list.media_hashes if not mh.is_directory)
-            out.append(GenerationView(int(hash_list.generation_number), created, files, tool))
+            listed = {
+                mh.path: {e.hash_format: e.hash_string for e in mh.hash_entries}
+                for mh in hash_list.media_hashes
+                if not mh.is_directory
+            }
+            full = any(mh.is_directory for mh in hash_list.media_hashes)
+            changes = ""
+            if known:
+                new = sum(1 for path in listed if path not in known)
+                modified = sum(
+                    1
+                    for path, hashes in listed.items()
+                    if path in known
+                    and any(known[path].get(fmt, h) != h for fmt, h in hashes.items())
+                )
+                removed = sum(1 for path in known if path not in listed) if full else 0
+                changes = _changes_text(new, modified, removed)
+            if full:
+                known = {}
+            known.update(listed)
+            out.append(
+                GenerationView(
+                    int(hash_list.generation_number), created, len(listed), tool, changes
+                )
+            )
         return History(generations=out)
     except Exception as exc:
         return History(error=f"the manifest history could not be read ({type(exc).__name__})")
+
+
+# --- "What's archived" panel (D75) -----------------------------------------------------------
+# Everything comes from the DB (sealed_files, the project row, the settings): opening the page
+# does not read the archive any more than before.
+
+ROOT_FOLDER = "(project root)"
+TOP_TYPES = 8
+
+
+@dataclass(slots=True)
+class FolderRow:
+    name: str
+    files: int
+    size: str
+    pct: int  # bar width, relative to the biggest folder
+
+
+@dataclass(slots=True)
+class FileRow:
+    path: str
+    size: str
+    hash_short: str
+    hash_full: str
+
+
+@dataclass(slots=True)
+class ArchivePanel:
+    summary: str
+    verified: str
+    folders: list[FolderRow]
+    types: str
+    files: list[FileRow]
+
+
+def short_hash(value: str | None) -> str:
+    if not value:
+        return "-"
+    return value if len(value) <= 12 else f"{value[:4]}…{value[-4:]}"
+
+
+def archive_next_check(project: ProjectRow, settings: Settings, now: datetime) -> str:
+    """Approximate date of the next periodic verification (D23): the last verification (else the
+    seal) plus ``verify_interval_days``; the scheduler staggers them, so it may run a bit later."""
+    base = _as_utc(project.last_verified_at or project.last_sealed_at)
+    if base is None:
+        return ""
+    due = base + timedelta(days=settings.verify_interval_days)
+    tz = settings.tzinfo
+    if due.astimezone(tz).date() < now.astimezone(tz).date():
+        return OVERDUE
+    return fmt_date(due, tz)
+
+
+def archive_panel(
+    db: Database, project: ProjectRow, settings: Settings, now: datetime
+) -> ArchivePanel | None:
+    sealed = [
+        f for f in db.get_sealed_files(project.id).values() if f.rel_path.split("/")[0] != "ascmhl"
+    ]
+    if not sealed:
+        return None
+    tz = settings.tzinfo
+    total = sum(f.size for f in sealed)
+    summary = f"{_n(len(sealed), 'file', 'files')} · {human_size(total)}"
+    if project.last_sealed_at:
+        summary += f" · sealed {fmt_date(project.last_sealed_at, tz)}"
+    due = archive_next_check(project, settings, now)
+    when = "is due now" if due == OVERDUE else f"around {due}"
+    if project.last_verified_at:
+        verified = f"Last verified {fmt_date(project.last_verified_at, tz)} · next check {when}"
+    else:
+        verified = f"Not verified yet · first check {when}" if due else "Not verified yet"
+
+    per_folder: dict[str, list[int]] = {}
+    per_type: Counter[str] = Counter()
+    for f in sealed:
+        head, sep, _ = f.rel_path.partition("/")
+        entry = per_folder.setdefault(head if sep else ROOT_FOLDER, [0, 0])
+        entry[0] += 1
+        entry[1] += f.size
+        per_type[PurePosixPath(f.rel_path).suffix.lower() or "no extension"] += 1
+    biggest = max(size for _, size in per_folder.values()) or 1
+    folders = [
+        FolderRow(name, count, human_size(size), round(100 * size / biggest))
+        for name, (count, size) in sorted(
+            per_folder.items(), key=lambda kv: (kv[0] != ROOT_FOLDER, kv[0].lower())
+        )
+    ]
+    ranked = sorted(per_type.items(), key=lambda kv: (-kv[1], kv[0]))
+    types = " · ".join(f"{ext} {count}" for ext, count in ranked[:TOP_TYPES])
+    if len(ranked) > TOP_TYPES:
+        types += f" · {len(ranked) - TOP_TYPES} others"
+    files = [
+        FileRow(f.rel_path, human_size(f.size), short_hash(f.xxh128), f.xxh128 or "")
+        for f in sorted(sealed, key=lambda f: f.rel_path.lower())
+    ]
+    return ArchivePanel(summary, verified, folders, types, files)
 
 
 # --- inbox model (issue #5, proposal D) ------------------------------------------------------
