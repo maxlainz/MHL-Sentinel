@@ -4,6 +4,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-06 — Etiquetas de Finder sin falsear
+
 ### Cambiado
 - Etiquetas de Finder: con la opción encendida, la app es dueña de las etiquetas de cada carpeta de proyecto. Borra las que ya hubiera (también las del equipo) y corrige en la siguiente pasada fuera del horario laboral cualquier etiqueta cambiada a mano, así que la etiqueta siempre dice el estado real. Con la opción apagada ya no quita nada (D72).
 
