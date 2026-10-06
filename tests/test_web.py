@@ -195,8 +195,7 @@ def test_main_page_lists_projects_with_badges_and_counters(
     assert "Review changes" in html and 'action="/projects/' in html
     assert re.search(r'action="/projects/\d+/seal\?from=inbox"', html)  # one-click Seal
     assert 'id="activity"' in html and "Outside working hours" in html
-    full_list = html.split('id="all-projects"', 1)[1]
-    lights = re.findall(r'<li data-state="(\w+)"[^>]*><span class="light (\w+)"', full_list)
+    lights = re.findall(r'<li[^>]*data-state="(\w+)"[^>]*>\s*<span class="light (\w+)"', html)
     assert lights == [
         ("needs_review", "red"),
         ("unsealed", "amber"),
@@ -204,7 +203,7 @@ def test_main_page_lists_projects_with_badges_and_counters(
         ("ignored", "grey"),
     ]
     assert "review: 1 modified, 1 deleted since the last seal" in html
-    assert "sealed 2026-10-02 · verified 2026-10-02" in html  # 22:00 UTC = next day in Madrid
+    assert re.search(r'class="text">sealed 2026-10-02\b', html)  # 22:00 UTC = next day in Madrid
     assert "press Seal" in html
     assert "loose-notes.txt" in html  # D49: out-of-place entries
     assert str(env.archive) not in html  # D10: no absolute paths on the main screen
@@ -323,7 +322,7 @@ def test_inbox_buttons_stay_on_the_inbox(env: Env) -> None:
     assert r.status_code == 200 and 'id="projects"' in r.text
     assert "2025-03_CLIENTE-NUEVO: Seal requested" in r.text
     assert r.headers["HX-Trigger"] == "inbox-changed"
-    assert f'action="/projects/{pid}/cancel?from=inbox"' in r.text  # In progress, with Cancel
+    assert f'action="/projects/{pid}/cancel?from=inbox"' in r.text  # Queue, with Cancel
     activity = env.client.get("/fragments/activity").text
     assert "Seal 2025-03_CLIENTE-NUEVO" in activity  # next in the queue
     r = env.client.post(f"/projects/{pid}/cancel?from=inbox")  # no JS: back to the inbox
@@ -590,12 +589,13 @@ def test_headline_tones_follow_every_state(env: Env) -> None:
     assert _headline(env) == views.Headline("wait", "1 project has new files waiting to be added.")
     db.set_state(ids["unsealed"], ProjectState.SEALED)
     assert _headline(env) == views.Headline("calm", "All quiet. Every project is sealed.")
-    assert ", all quiet" in env.client.get("/fragments/projects").text
+    assert '<h2 class="label">Sealed' in env.client.get("/fragments/projects").text
     for key in ("sealed", "needs_review", "unsealed"):
         db.set_state(ids[key], ProjectState.IGNORED)
     assert _headline(env).text == "Every project is ignored."
     inbox = env.client.get("/fragments/projects").text
-    assert "Every project is ignored." in inbox and "all quiet" not in inbox
+    assert "Every project is ignored." in inbox and 'id="fold-ignored"' in inbox
+    assert "Show 4 ignored" in inbox and ">Sealed <" not in inbox
     assert views.headline([], True).text == "No projects found yet."
 
 
@@ -661,6 +661,61 @@ def test_inbox_folds_long_lists_and_orders_moving(env: Env) -> None:
         db.enqueue_job(JobKind.VERIFY, p.id, Trigger.AUTO, 10, NOW)
     upcoming = views.activity(db, env.ref.value.tzinfo, NOW, None).upcoming
     assert len(upcoming) == 9 and upcoming[-1].text == "and 1 more"
+
+
+def _sections(html: str) -> list[str]:
+    return re.findall(r'<h2 class="label">(.*?) <span', html)
+
+
+def test_inbox_sections_order_sealed_by_date_and_search(env: Env) -> None:
+    db = env.db
+    older = db.upsert_project("2025/2025-01_B-OLD", "2025-01_B-OLD", True, NOW)
+    nodate = db.upsert_project("2025/2025-02_C-NODATE", "2025-02_C-NODATE", True, NOW)
+    tie = db.upsert_project("2025/2025-03_A-TIE", "2025-03_A-TIE", True, NOW)
+    for pid in (older, nodate, tie):
+        db.set_state(pid, ProjectState.SEALED)
+    db.update_project_fields(older, last_sealed_at=NOW - timedelta(days=30))
+    db.update_project_fields(nodate, last_sealed_at=None)
+    db.update_project_fields(tie, last_sealed_at=NOW)  # same instant as the fixture's sealed one
+    queued = db.upsert_project("2025/2025-10_Q-QUEUED", "2025-10_Q-QUEUED", True, NOW)
+    db.set_state(queued, ProjectState.QUEUED)
+    ignored = db.upsert_project("2025/2025-11_I-IGNORED", "2025-11_I-IGNORED", True, NOW)
+    db.set_state(ignored, ProjectState.IGNORED)
+    box = views.inbox(db, db.list_projects(), env.ref.value, None, NOW)
+    assert [r.view.name for r in box.quiet] == [
+        "2025-01_CLIENTE-SELLADO",
+        "2025-03_A-TIE",
+        "2025-01_B-OLD",
+        "2025-02_C-NODATE",
+    ]
+    html = env.client.get("/").text
+    assert _sections(html) == ["Needs your decision", "Not sealed yet", "Queue", "Sealed"]
+    assert html.index('class="label">Queue') < html.index('class="label">Sealed')
+    assert 'type="search" placeholder="Search projects"' in html
+    assert html.index('id="project-search"') < html.index('id="projects"')  # outside the fragment
+    assert "sealed 2026-10-02" in html and "<li" in html and 'data-name="2025-03_A-TIE' in html
+    assert "Show 2 ignored" in html and "All projects" not in html and "In progress" not in html
+    assert "fold-sealed" not in html  # 4 sealed fit in the preview
+    for i in range(4):
+        pid = db.upsert_project(f"2024/2024-0{i}_S", f"2024-0{i}_S", True, NOW)
+        db.set_state(pid, ProjectState.SEALED)
+    assert "Show 2 more sealed" in env.client.get("/fragments/projects").text
+
+
+def test_inbox_closing_line_and_empty_states(env: Env) -> None:
+    db = env.db
+    for pid in env.ids.values():
+        db.set_state(pid, ProjectState.UNSEALED)
+    html = env.client.get("/fragments/projects").text
+    assert ">Sealed <" not in html and "Queue" not in html
+    assert "Verification starts once a project is sealed. 4 projects watched." in " ".join(
+        html.split()
+    )
+    assert "fold-ignored" not in html
+    for pid in env.ids.values():
+        db.delete_project(pid)
+    html = env.client.get("/fragments/projects").text
+    assert "No projects found yet." in html and "Needs your decision" not in html
 
 
 def test_detail_sentence_per_state(env: Env) -> None:
@@ -736,7 +791,7 @@ def test_inbox_shows_a_missing_project_as_a_decision(
     assert f'action="/projects/{pid}/retry?from=inbox"' in html
     assert "This deletes the app's record and the saved MHL history" in html
     assert "Forget and download MHL" in html and "The archive folder itself is not touched." in html
-    assert re.search(r'data-state="missing"[^>]*><span class="light red"', html)
+    assert re.search(r'data-state="missing"[^>]*>\s*<span class="light red"', html)
     card = env.client.get(f"/projects/{pid}").text
     assert "Retry" in card and "Forget permanently" in card and "Verify now" not in card
     assert "Ignore" not in card

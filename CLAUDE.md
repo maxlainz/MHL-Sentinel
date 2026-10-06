@@ -80,6 +80,7 @@ Requisitos: Python 3.12 (`uv` lo instala), `uv`, Docker (hito 2). `make setup` i
 ASC MHL Specification v1.0 (2022-03-15) y Implementation Guidelines v1.0 (2023-03-29), `ascmitc/mhl-specification` · `ascmhl` **1.2** (PyPI 2025-07-04, Python ≥ 3.11, MIT). Subir versión es decisión del owner.
 
 ## Estado y siguiente paso
+- **Estado (2026-10-06, bitácora 12, rama `feat/project-archive-panel`)**: ficha de proyecto con «What's archived» y cambios por generación (D75); portada con buscador y sellados por fecha (D76). Sin release aún. 492 tests. D1–D76.
 - **Estado (2026-10-06, bitácora 11, `v0.8.0`)**: `Seal now` / `Accept now` / `Update now` arrancan ya, con confirmación, un trabajo que espera al fin de la jornada, también los automáticos (D73, D74); `Update now` y `Verify now` en proyectos `changed` (D74). 482 tests. D1–D74.
 - **Estado (2026-10-06, bitácora 10, `v0.7.2`)**: con `finder_tags` encendido la app es dueña de las etiquetas de Finder de cada carpeta de proyecto: borra las demás y corrige las cambiadas a mano fuera del horario laboral; apagado no toca nada (D72). Base `v0.7.0`: etiquetas por estado, opt-in (D70), formato pendiente de medir en el NAS (#24). 461 tests. D1–D72.
 - **Estado (2026-10-05, bitácora 09, `v0.7.1`)**: mismo código que `v0.7.0`; deja verde la CI de `main` tras el trailer de atribución que entró con el merge del #27 (no se reescribe `main`).

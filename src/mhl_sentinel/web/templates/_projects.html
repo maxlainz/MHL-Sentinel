@@ -6,11 +6,18 @@
 </form>
 {%- endmacro %}
 {% macro item(r, cls="") -%}
-<li class="item {{ cls }}" data-state="{{ r.view.state }}">
+<li class="item {{ cls }}" data-state="{{ r.view.state }}" data-name="{{ r.view.name }}{% if r.view.folder %} {{ r.view.folder }}{% endif %}">
   <span class="light {{ r.view.light }}{% if r.view.state == 'hashing' %} pulse-anim{% endif %}" title="{{ r.view.label }}"></span>
   <div><a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>{% if r.view.folder %} <span class="where">in {{ r.view.folder }}</span>{% endif %}</div>
   <div class="text">{{ r.view.text }}{% if r.meta %} <span class="meta">· {{ r.meta }}</span>{% endif %}</div>
   {% if caller is defined %}<div class="acts">{{ caller() }}</div>{% endif %}
+</li>
+{%- endmacro %}
+{% macro sealed_item(r) -%}
+<li class="item" data-state="{{ r.view.state }}" data-name="{{ r.view.name }}{% if r.view.folder %} {{ r.view.folder }}{% endif %}">
+  <span class="light {{ r.view.light }}" title="{{ r.view.label }}"></span>
+  <div><a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>{% if r.view.folder %} <span class="where">in {{ r.view.folder }}</span>{% endif %}</div>
+  <div class="text">sealed{% if r.when %} {{ r.when }}{% endif %}{% if r.meta %} <span class="meta">· {{ r.meta }}</span>{% endif %}</div>
 </li>
 {%- endmacro %}
 <div id="projects"
@@ -67,7 +74,7 @@
 
   {% if inbox.moving %}
   <section class="section">
-    <h2 class="label">In progress <span class="count">{{ inbox.moving|length }}</span></h2>
+    <h2 class="label">Queue <span class="count">{{ inbox.moving|length }}</span></h2>
     <ul class="items compact">
       {% for r in inbox.moving %}
       {% if r.acts %}
@@ -89,41 +96,50 @@
   </section>
   {% endif %}
 
+  {% if inbox.quiet %}
   <section class="section">
-    <h2 class="label">Everything else</h2>
-    <div class="allquiet">
+    <h2 class="label">Sealed <span class="count">{{ inbox.quiet|length }}</span></h2>
+    <ul class="items compact">
+      {% for r in inbox.quiet[:preview] %}{{ sealed_item(r) }}{% endfor %}
+    </ul>
+    {% if inbox.quiet|length > preview %}
+    <details class="fold" id="fold-sealed">
+      <summary>Show {{ inbox.quiet|length - preview }} more sealed</summary>
+      <ul class="items compact">
+        {% for r in inbox.quiet[preview:] %}{{ sealed_item(r) }}{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="section closing" data-closing>
+    <div class="closing-text">
       {% if counters.projects == 0 and not inbox.ignored %}
       <p class="big">No projects found yet.</p>
       <p>The first round lists them.</p>
-      {% else %}
-      {% if counters.projects == 0 %}
-      <p class="big"><span class="light grey" aria-hidden="true"></span>
-        <span>Every project is ignored.</span></p>
+      {% elif counters.projects == 0 %}
+      <p class="big">Every project is ignored.</p>
       <p>{{ inbox.ignored|length }} ignored. Open one to watch it again.</p>
       {% else %}
-      <p class="big"><span class="light green" aria-hidden="true"></span>
-        <span><strong>{{ inbox.quiet|length }}</strong> sealed{% if inbox.quiet and inbox.quiet|length == counters.projects %}, all quiet{% endif %}</span></p>
       <p>
         {% if inbox.next_verification == "overdue" %}Some periodic verifications are overdue: the app verifies a few projects per night until it catches up.{% elif inbox.next_verification %}Next periodic verification due around {{ inbox.next_verification }}.{% else %}Verification starts once a project is sealed.{% endif %}
         {{ counters.projects }} project{{ '' if counters.projects == 1 else 's' }} watched{% if inbox.ignored %}, {{ inbox.ignored|length }} ignored{% endif %}.
       </p>
       {% endif %}
-      <details class="fold" id="fold-all">
-        <summary>All projects</summary>
-        <input class="filter" id="filter-all" type="search" placeholder="Filter by name" aria-label="Filter projects"
-               data-filter="all-projects" hidden>
-        <ul class="rows" id="all-projects">
-          {% for group in (inbox.decide, inbox.unsealed, inbox.moving, inbox.quiet, inbox.ignored) %}
-          {% for r in group %}
-          <li data-state="{{ r.view.state }}" data-name="{{ r.view.name }}"><span class="light {{ r.view.light }}" title="{{ r.view.label }}"></span>
-            <a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>
-            <span class="text">{% if r.view.folder %}in {{ r.view.folder }} · {% endif %}{{ r.view.text }}</span>
-          </li>
-          {% endfor %}
-          {% endfor %}
-        </ul>
-      </details>
-      {% endif %}
     </div>
+    {% if inbox.ignored %}
+    <details class="fold" id="fold-ignored">
+      <summary>Show {{ inbox.ignored|length }} ignored</summary>
+      <ul class="rows">
+        {% for r in inbox.ignored %}
+        <li data-state="{{ r.view.state }}" data-name="{{ r.view.name }}{% if r.view.folder %} {{ r.view.folder }}{% endif %}"><span class="light {{ r.view.light }}" title="{{ r.view.label }}"></span>
+          <a class="name" href="/projects/{{ r.view.id }}">{{ r.view.name }}</a>
+          <span class="text">{% if r.view.folder %}in {{ r.view.folder }} · {% endif %}{{ r.view.text }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
   </section>
 </div>

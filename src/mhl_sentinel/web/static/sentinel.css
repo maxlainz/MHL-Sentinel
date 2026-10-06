@@ -236,13 +236,12 @@ form.inline { display: inline; margin: 0; }
 @keyframes breathe { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .light.pulse-anim, .timeline li.running::before { animation: none; } }
 
-/* --- all quiet ------------------------------------------------------------------------------- */
-.allquiet { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-         box-shadow: var(--shadow); padding: 18px 20px; }
-.allquiet p { margin: 0; color: var(--ink-2); }
-.allquiet p.big { color: var(--ink); font-size: 17px; font-weight: 500; margin: 0 0 4px;
-               display: flex; gap: 10px; align-items: center; }
-.allquiet p.big strong { font-weight: 600; }
+/* --- search and closing line (D76) -------------------------------------------------------------- */
+.filter.search { max-width: none; margin: 0 0 28px; padding: 10px 14px; }
+.closing-text p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+.closing-text p.big { color: var(--ink); font-size: 17px; font-weight: 500; margin-bottom: 4px; }
+.closing .fold { margin-top: 8px; }
+
 details > summary { cursor: pointer; list-style: none; }
 details > summary::-webkit-details-marker { display: none; }
 details > summary::before { content: "›"; display: inline-block; width: 1em; color: var(--ink-3);
@@ -357,6 +356,19 @@ progress::-moz-progress-bar { background: var(--amber); border-radius: 999px; }
   .changes td:empty { display: none; }
 }
 
+.arch-summary { margin: 0; font-size: 16px; font-weight: 500; }
+.arch-verified, .arch-types { margin: 4px 0 0; }
+.archived .folders { margin-top: 18px; }
+.archived .folders td:nth-child(2), .archived .folders td:nth-child(3) { white-space: nowrap; }
+.barcell { width: 40%; min-width: 120px; vertical-align: middle; }
+.bar { display: block; height: 8px; border-radius: 4px; background: var(--sunken); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 4px; background: var(--green); }
+.archived .fold { margin-top: 18px; }
+.archived .filter { margin: 12px 0; max-width: 28em; }
+.archived .files td:first-child { white-space: normal; font-weight: 400; }
+.archived .files td:nth-child(2) { white-space: nowrap; }
+.hash { font-family: var(--mono); font-size: 13px; color: var(--ink-2); user-select: all; white-space: nowrap; }
+.changes-note { color: var(--ink-3); }
 .history { list-style: none; margin: 0; padding: 0; position: relative; }
 .history li { position: relative; padding: 0 0 18px 26px; }
 .history li::before { content: ""; position: absolute; left: 0; top: 7px; width: 9px; height: 9px;

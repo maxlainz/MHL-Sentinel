@@ -4,6 +4,17 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+### Añadido
+- Ficha de proyecto: panel «What's archived» con ficheros, tamaño, fecha de sellado, última verificación y la próxima aproximada; desglose por carpeta de primer nivel con barra proporcional; recuento por extensión; y lista de ficheros plegable con ruta, tamaño, xxh128 y filtro por nombre. Sale de la DB, sin leer el NAS (D75).
+- Historial de manifiestos: cada generación indica los ficheros nuevos, modificados y borrados respecto a la anterior; las generaciones de añadido (parciales) no cuentan borrados (D75).
+
+### Cambiado
+- Portada: nuevo orden Needs your decision, Not sealed yet, Queue (antes «In progress»), Sealed y una línea final. Los sellados salen a la vista, el más reciente primero (por fecha de sellado), con los primeros visibles y el resto plegado; desaparece el plegable «All projects»; los ignorados quedan plegados en la línea final (D76).
+- Portada: buscador siempre visible encima de todo; filtra por nombre en el navegador todas las secciones (también los ignorados), abre los plegables con coincidencias, oculta las secciones vacías y sobrevive a los refrescos en vivo. Esc lo limpia (D76).
+
+### Decidido
+- D75, D76: ver `docs/decisiones.md`.
+
 ## [0.8.0] - 2026-10-06 — Sellar ahora
 
 ### Añadido
