@@ -1131,12 +1131,12 @@ def test_seal_now_resumes_a_seal_paused_by_working_hours(tmp_path: Path) -> None
     assert len(list((project / "ascmhl").glob("*.mhl"))) == 1
 
 
-def test_start_now_on_the_supervisor_only_for_a_paused_manual_seal_or_accept(
+def test_start_now_on_the_supervisor_only_for_a_paused_seal_accept_or_append(
     tmp_path: Path,
 ) -> None:
-    """D73: ``request_start_now`` refuses another project, a Verify now, an automatic job and a
-    job already flagged; ``notify_job_queued`` also makes yield a paused job flagged in the DB
-    after the hasher took it (a Seal now racing the hasher)."""
+    """D73, D74: ``request_start_now`` refuses another project, a Verify now, a job of another
+    kind and a job already flagged; ``notify_job_queued`` also makes yield a paused job flagged
+    in the DB after the hasher took it (a Seal now racing the hasher)."""
     archive = tmp_path / "archive"
     generator().build(archive, 1, "small")
     working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
@@ -1158,7 +1158,7 @@ def test_start_now_on_the_supervisor_only_for_a_paused_manual_seal_or_accept(
 
         for job in (
             dataclasses.replace(seal, kind=JobKind.VERIFY),  # Verify now: already bypass
-            dataclasses.replace(seal, trigger=Trigger.AUTO),
+            dataclasses.replace(seal, kind=JobKind.ROOT_MANIFEST),
             dataclasses.replace(seal, bypass_hours=True),
         ):
             current(job)
@@ -1177,3 +1177,208 @@ def test_start_now_on_the_supervisor_only_for_a_paused_manual_seal_or_accept(
         sup._yield_event.clear()
         assert not sup.request_start_now(first.id)  # flagged already in the DB
         assert not sup._yield_event.is_set()
+
+
+# -- Seal now / Update now on automatic jobs, Update now on a changed project (D74) --------------
+
+
+def test_seal_now_runs_a_queued_automatic_seal_and_keeps_it_automatic(tmp_path: Path) -> None:
+    """D74: an automatic seal waiting for the evening gets ``bypass_hours`` (not ``manual``)
+    and runs with the gate closed; Cancel never applies to it. The generation is valid."""
+    archive = tmp_path / "archive"
+    generator().build(archive, 1, "small")
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sealer.run_scan_cycle(db, settings, now=utcnow())
+            first = db.list_projects()[0]
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                EventBus(db),
+                tick_seconds=0.05,
+                idle_seconds=0.05,
+                now_fn=lambda: NOON,
+            )
+            await sup.start()
+            try:
+                await until(lambda: sup.status().archive_reachable)
+                await until(lambda: sup._fs_recovered.is_set())
+                seal_id = sealer.enqueue(db, first.id, JobKind.SEAL, Trigger.AUTO, utcnow())
+                db.set_state(first.id, ProjectState.QUEUED)
+                sup.notify_job_queued()
+                time.sleep(0.3)  # left for the evening
+                seal = db.get_job(seal_id)
+                assert seal is not None and seal.state is JobState.QUEUED
+                assert sealer.request_start_now(db, first.id, utcnow()) == seal_id
+                sup.notify_job_queued()
+
+                def sealed() -> bool:
+                    job = db.get_job(seal_id)
+                    return job is not None and job.state is JobState.DONE
+
+                await until(sealed)
+                assert not sup.status().gate_open
+                done = db.get_job(seal_id)
+                assert done is not None and done.trigger is Trigger.AUTO and done.bypass_hours
+                after = db.get_project(first.id)
+                assert after is not None and after.state is ProjectState.SEALED
+            finally:
+                await sup.stop()
+
+    run(body)
+    project = next(p for p in archive.rglob("ascmhl") if p.is_dir()).parent
+    verify = run_cli("ascmhl-debug", "verify", project)
+    assert verify.returncode == 0, verify.stdout + verify.stderr
+
+
+def test_update_now_resumes_an_automatic_append_paused_by_working_hours(tmp_path: Path) -> None:
+    """D74: an automatic append paused by the working hours goes back to the queue and comes
+    back at once with the always-open gate, still automatic and without Cancel; the partial
+    generation it writes is valid."""
+    archive = tmp_path / "archive"
+    project = archive / "2024" / "2024-01_CLIENTE-Z_MUCHOS"
+    many_files(project, folders=1, files=4)
+    working = WorkingHoursConfig(days=ALL_DAYS, start="09:00", end="19:00")
+    settings = make_settings(tmp_path, archive, working_hours=working)
+    clock = {"now": EVENING}
+    with Database(settings.db_path) as db:
+        sealer.run_scan_cycle(db, settings, now=utcnow())
+        row = db.get_project("2024/2024-01_CLIENTE-Z_MUCHOS")
+        assert row is not None
+        sealer.request_seal(db, row.id, utcnow())
+        while (job := db.next_job(utcnow())) is not None:
+            gate = threading.Event()
+            gate.set()
+            sealer.run_job(db, settings, job, gate=gate, stop=threading.Event())
+    many_files(project / "03_NEW", folders=3)  # 300 new files
+    with Database(settings.db_path) as db:
+        assert sealer.run_scan_cycle(db, settings, now=utcnow()).enqueued == []  # new: changed
+        later = utcnow() + timedelta(seconds=5)
+        summary = sealer.run_scan_cycle(db, settings, now=later)  # stable, settle 0: auto append
+        assert summary.enqueued == [(row.rel_path, JobKind.APPEND)]
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sup = Supervisor(
+                db,
+                SettingsRef(settings),
+                EventBus(db),
+                tick_seconds=0.05,
+                idle_seconds=0.05,
+                now_fn=lambda: clock["now"],
+            )
+            real_progress = db.update_job_progress
+
+            def progress(
+                job_id: int, files_done: int, files_total: int, bytes_done: int, bytes_total: int
+            ) -> None:
+                real_progress(job_id, files_done, files_total, bytes_done, bytes_total)
+                if files_done == 1 and clock["now"] is EVENING:
+                    clock["now"] = NOON
+                    sup.gate.clear()
+
+            db.update_job_progress = progress  # type: ignore[method-assign]
+            append = db.queued_job(row.id)
+            assert append is not None and append.trigger is Trigger.AUTO
+            await sup.start()
+            try:
+
+                def paused() -> bool:
+                    job = db.get_job(append.id)
+                    return job is not None and job.files_done == 1 and not sup.gate.is_set()
+
+                await until(paused)
+                time.sleep(0.2)
+                hashing = db.get_project(row.id)
+                assert hashing is not None and hashing.state is ProjectState.HASHING
+                assert sealer.cancellable_job(db, hashing) is None
+                assert not sup.request_cancel(row.id)  # automatic: never cancelled (D74)
+                assert sup.request_start_now(row.id)
+
+                def done() -> bool:
+                    job = db.get_job(append.id)
+                    return job is not None and job.state is JobState.DONE
+
+                await until(done)
+                assert not sup.gate.is_set()
+                finished = db.get_job(append.id)
+                assert finished is not None and finished.bypass_hours
+                assert finished.trigger is Trigger.AUTO and finished.files_done == 300
+                after = db.get_project(row.id)
+                assert after is not None and after.state is ProjectState.SEALED
+                assert after.last_generation_no == 2
+            finally:
+                await sup.stop()
+
+    run(body)
+    verify = run_cli("ascmhl-debug", "verify", project)
+    assert verify.returncode == 0, verify.stdout + verify.stderr
+    assert len(list((project / "ascmhl").glob("*.mhl"))) == 2
+
+
+def test_cancel_on_the_supervisor_takes_a_running_update_now_back_to_changed(
+    tmp_path: Path,
+) -> None:
+    """D74: a running Update now (manual append) is aborted at the next file like a Seal (D57);
+    the project goes back to ``changed`` and no generation is written."""
+    archive = tmp_path / "archive"
+    project = archive / "2024" / "2024-01_CLIENTE-Z_MUCHOS"
+    many_files(project, folders=1, files=4)
+    settings = make_settings(tmp_path, archive, settle_hours=168)
+    with Database(settings.db_path) as db:
+        sealer.run_scan_cycle(db, settings, now=utcnow())
+        row = db.get_project("2024/2024-01_CLIENTE-Z_MUCHOS")
+        assert row is not None
+        sealer.request_seal(db, row.id, utcnow())
+        while (job := db.next_job(utcnow())) is not None:
+            gate = threading.Event()
+            gate.set()
+            sealer.run_job(db, settings, job, gate=gate, stop=threading.Event())
+    many_files(project / "03_NEW", folders=10)  # 1000 new files, far from settled
+    with Database(settings.db_path) as db:
+        summary = sealer.run_scan_cycle(db, settings, now=utcnow())
+        assert summary.enqueued == []
+        changed = db.get_project(row.id)
+        assert changed is not None and changed.state is ProjectState.CHANGED
+
+    async def body() -> None:
+        with Database(settings.db_path) as db:
+            sup = Supervisor(
+                db, SettingsRef(settings), EventBus(db), tick_seconds=0.05, idle_seconds=0.05
+            )
+            gate_hold = threading.Event()
+            real_progress = db.update_job_progress
+
+            def progress(
+                job_id: int, files_done: int, files_total: int, bytes_done: int, bytes_total: int
+            ) -> None:
+                real_progress(job_id, files_done, files_total, bytes_done, bytes_total)
+                if files_done == 1:
+                    gate_hold.set()
+                    time.sleep(0.2)  # let the test press Cancel before the next file
+
+            db.update_job_progress = progress  # type: ignore[method-assign]
+            await sup.start()
+            try:
+                await until(lambda: sup._fs_recovered.is_set())
+                job_id = sealer.request_update_now(db, row.id, utcnow())
+                sup.notify_job_queued()
+                await until(gate_hold.is_set)
+                assert sup.request_cancel(row.id)
+
+                def cancelled() -> bool:
+                    job = db.get_job(job_id)
+                    return job is not None and job.state is JobState.CANCELLED
+
+                await until(cancelled)
+                after = db.get_project(row.id)
+                assert after is not None and after.state is ProjectState.CHANGED
+                assert after.last_generation_no == 1
+            finally:
+                await sup.stop()
+
+    run(body)
+    assert len(list((project / "ascmhl").glob("*.mhl"))) == 1

@@ -414,5 +414,12 @@ Sealing
 
 ---
 
+## D74 — Paridad de «ahora»: trabajos automáticos en cola, `changed` sin asentar y `Verify now` en `changed`
+- **Contexto**: tras D73, revisión de dónde un trabajo espera al fin de la jornada sin botón. Cuatro huecos: un `seal` automático en cola (proyecto nuevo terminado, D15/D31), un `append` automático en cola, un proyecto `changed` cuyos ficheros nuevos aún no han reposado (D9) y `Verify now` solo en `sealed` (D63).
+- **Elección**: del owner, los cuatro. (1) Un `seal` o `append` automático en cola o pausado por el horario muestra `Seal now` / `Update now` en horario laboral, con la confirmación de D73; pasa a `bypass_hours` sin cambiar a manual y sigue sin `Cancel` (la siguiente pasada lo volvería a encolar, D53). (2) Un proyecto `changed` muestra `Update now` a cualquier hora: encola un `append` manual con `bypass_hours` sin esperar al reposo; el diálogo avisa de que, si aún se están copiando ficheros, se sellaría una copia a medias, y en horario laboral además del tamaño a leer. Ese `append` manual se cancela como un Seal y el proyecto vuelve a `changed`. (3) `Verify now` también en `changed`. La verificación escribe una generación completa, así que en `changed` verifica lo sellado y sella de paso los ficheros nuevos sin esperar al reposo; elegido por el owner frente a quitar el botón o verificar sin sellar: el diálogo se muestra siempre (también fuera de horario) con el aviso de copia a medias y que sella lo nuevo. Cancelado, el proyecto vuelve a `changed` si el último scan vio ficheros sin sellar (no espera al siguiente scan, que en horario laboral no llega). El tamaño que anuncia `Update now` es el de los ficheros sin sellar según la DB, sin tocar el NAS.
+- 2026-10-06.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

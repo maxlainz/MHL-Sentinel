@@ -404,7 +404,7 @@ def test_start_now_flags_a_queued_seal_or_accept(tmp_path: Path) -> None:
     keeps waiting as ``queued`` (the supervisor takes it) and stays cancellable."""
     settings, db = make_archive(tmp_path)
     sealer.run_scan_cycle(db, settings, now=NOW)
-    first, second = db.list_projects()
+    first = db.list_projects()[0]
     with pytest.raises(sealer.SealerError, match="nothing to start now"):
         sealer.request_start_now(db, first.id, NOW)  # unsealed: nothing queued
 
@@ -434,18 +434,49 @@ def test_start_now_flags_a_queued_seal_or_accept(tmp_path: Path) -> None:
     assert project is not None and project.state is ProjectState.QUEUED
     assert project.review_reason == "modified: 01_MASTERS/m.mov"
 
-    # A Verify now already runs inside working hours; an automatic job never jumps them.
+    # A Verify now already runs inside working hours: nothing to start.
     sealer.request_cancel(db, first.id, NOW)
     db.set_state(first.id, ProjectState.SEALED)
     sealer.request_verify_now(db, first.id, NOW)
     with pytest.raises(sealer.SealerError, match="nothing to start now"):
         sealer.request_start_now(db, first.id, NOW)
-    sealer.enqueue(db, second.id, JobKind.SEAL, Trigger.AUTO, NOW)
-    db.set_state(second.id, ProjectState.QUEUED)
-    with pytest.raises(sealer.SealerError, match="nothing to start now"):
-        sealer.request_start_now(db, second.id, NOW)
     with pytest.raises(sealer.SealerError):
         sealer.request_start_now(db, 999, NOW)
+
+
+def test_start_now_flags_an_automatic_seal_or_append_without_making_it_manual(
+    tmp_path: Path,
+) -> None:
+    """D74: Seal now / Update now on a queued automatic seal or append: ``bypass_hours`` only;
+    the trigger and the priority stay, so there is still no Cancel."""
+    settings, db = make_archive(tmp_path)
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    first, second = db.list_projects()
+    seal_id = sealer.enqueue(db, first.id, JobKind.SEAL, Trigger.AUTO, NOW)
+    db.set_state(first.id, ProjectState.QUEUED)
+    queued = db.get_project(first.id)
+    assert queued is not None
+    assert sealer.startable_now_job(db, queued) == db.get_job(seal_id)
+    assert sealer.cancellable_job(db, queued) is None
+    assert sealer.request_start_now(db, first.id, NOW) == seal_id
+    seal = db.get_job(seal_id)
+    assert seal is not None and seal.bypass_hours and seal.trigger is Trigger.AUTO
+    assert seal.priority == sealer.PRIORITY[JobKind.SEAL] and seal.state is JobState.QUEUED
+    assert sealer.startable_now_job(db, queued) is None  # already starting
+    with pytest.raises(sealer.SealerError, match="nothing to cancel"):
+        sealer.request_cancel(db, first.id, NOW)
+
+    append_id = sealer.enqueue(db, second.id, JobKind.APPEND, Trigger.AUTO, NOW)
+    db.set_state(second.id, ProjectState.QUEUED)
+    assert sealer.request_start_now(db, second.id, NOW) == append_id
+    append = db.get_job(append_id)
+    assert append is not None and append.bypass_hours and append.trigger is Trigger.AUTO
+
+    # A scheduled verification is not started this way: Verify now promotes it (D63).
+    db.set_job_state(append_id, JobState.DONE, NOW)
+    sealer.enqueue(db, second.id, JobKind.VERIFY, Trigger.AUTO, NOW)
+    with pytest.raises(sealer.SealerError, match="nothing to start now"):
+        sealer.request_start_now(db, second.id, NOW)
 
 
 def test_start_now_refuses_a_running_job(tmp_path: Path) -> None:
@@ -464,6 +495,132 @@ def test_start_now_refuses_a_running_job(tmp_path: Path) -> None:
         sealer.request_start_now(db, project.id, NOW)
     job = db.get_job(job_id)
     assert job is not None and not job.bypass_hours
+
+
+# --- D74: Update now and Verify now on a changed project ----------------------------------------
+
+
+def sealed_then_changed(tmp_path: Path) -> tuple[Settings, Database, ProjectRow, Path]:
+    """A sealed project that just got a new file, too fresh to settle (168 h): ``changed``,
+    nothing queued."""
+    settings, db = make_archive(tmp_path)
+    settings = settings.model_copy(update={"settle_hours": 168})
+    sealer.run_scan_cycle(db, settings, now=NOW)
+    first = db.list_projects()[0]
+    sealer.request_seal(db, first.id, NOW)
+    run_all_jobs(db, settings)
+    folder = settings.archive_root / first.rel_path
+    (folder / "02_NEW").mkdir()
+    (folder / "02_NEW" / "n.mov").write_bytes(b"new" * 300)
+    stamp = (NOW - timedelta(minutes=5)).timestamp()  # five minutes old: far from settled
+    os.utime(folder / "02_NEW" / "n.mov", (stamp, stamp))
+    summary = sealer.run_scan_cycle(db, settings, now=NOW)
+    assert not summary.enqueued
+    project = db.get_project(first.id)
+    assert project is not None and project.state is ProjectState.CHANGED
+    return settings, db, project, folder
+
+
+def test_update_now_appends_an_unsettled_change_and_can_be_taken_back(tmp_path: Path) -> None:
+    """D74: Update now = a manual append with ``bypass_hours`` that does not wait for the settle
+    time; Cancel (queued or running) takes the project back to ``changed``; run to the end it
+    writes a valid partial generation with the new file."""
+    settings, db, project, folder = sealed_then_changed(tmp_path)
+    assert [f.rel_path for f in sealer.unsealed_files(db, project.id)] == ["02_NEW/n.mov"]
+    second = db.list_projects()[1]
+    with pytest.raises(sealer.SealerError, match="Update now needs state changed"):
+        sealer.request_update_now(db, second.id, NOW)  # unsealed
+    with pytest.raises(sealer.SealerError):
+        sealer.request_update_now(db, 999, NOW)
+
+    job_id = sealer.request_update_now(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None and job.kind is JobKind.APPEND and job.trigger is Trigger.MANUAL
+    assert job.bypass_hours and job.priority == sealer.PRIORITY[JobKind.APPEND] + 100
+    queued = db.get_project(project.id)
+    assert queued is not None and queued.state is ProjectState.QUEUED
+    assert sealer.cancellable_job(db, queued) == job
+    assert sealer.startable_now_job(db, queued) is None  # born starting: no Update now on it
+    with pytest.raises(sealer.SealerError, match="Update now needs state changed"):
+        sealer.request_update_now(db, project.id, NOW)  # queued already
+    assert sealer.request_cancel(db, project.id, NOW) == job_id
+    back = db.get_project(project.id)
+    assert back is not None and back.state is ProjectState.CHANGED
+
+    # Running: Cancel aborts at the first file boundary, nothing is written.
+    job_id = sealer.request_update_now(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    cancel.set()
+    sealer.run_job(db, settings, job, gate=open_gate(), stop=threading.Event(), cancel=cancel)
+    assert db.get_job(job_id).state is JobState.CANCELLED  # type: ignore[union-attr]
+    back = db.get_project(project.id)
+    assert back is not None and back.state is ProjectState.CHANGED
+    assert len(list((folder / "ascmhl").glob("*.mhl"))) == 1
+
+    # To the end: the settle time is not checked again by the job.
+    sealer.request_update_now(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    done = db.get_project(project.id)
+    assert done is not None and done.state is ProjectState.SEALED
+    assert done.last_generation_no == 2
+    assert "02_NEW/n.mov" in db.get_sealed_files(project.id)
+    assert sealer.unsealed_files(db, project.id) == []
+    verify = run_cli("ascmhl-debug", "verify", folder)
+    assert verify.returncode == 0, verify.stdout + verify.stderr
+    summary = sealer.run_scan_cycle(db, settings, now=NOW)
+    assert summary.states[project.rel_path] is ProjectState.SEALED
+
+
+def test_update_now_promotes_a_queued_automatic_append(tmp_path: Path) -> None:
+    """D74: an automatic append already queued becomes the manual one (no duplicate)."""
+    _settings, db, project, _folder = sealed_then_changed(tmp_path)
+    auto_id = sealer.enqueue(db, project.id, JobKind.APPEND, Trigger.AUTO, NOW)
+    assert sealer.request_update_now(db, project.id, NOW) == auto_id
+    job = db.get_job(auto_id)
+    assert job is not None and job.trigger is Trigger.MANUAL and job.bypass_hours
+    assert job.priority == sealer.PRIORITY[JobKind.APPEND] + 100
+    assert db.count_jobs(JobState.QUEUED) == 1
+
+
+def test_verify_now_on_a_changed_project(tmp_path: Path) -> None:
+    """D74: Verify now also on ``changed``. Cancelled (queued or running) it goes back to
+    ``changed`` while the last scan saw unsealed files; run to the end the new file joins the
+    verification generation as ``original`` and is not a problem."""
+    settings, db, project, folder = sealed_then_changed(tmp_path)
+    job_id = sealer.request_verify_now(db, project.id, NOW)
+    assert sealer.request_cancel(db, project.id, NOW) == job_id
+    back = db.get_project(project.id)
+    assert back is not None and back.state is ProjectState.CHANGED
+
+    job_id = sealer.request_verify_now(db, project.id, NOW)
+    job = db.get_job(job_id)
+    assert job is not None
+    cancel = threading.Event()
+    cancel.set()
+    sealer.run_job(db, settings, job, gate=open_gate(), stop=threading.Event(), cancel=cancel)
+    back = db.get_project(project.id)
+    assert back is not None and back.state is ProjectState.CHANGED
+    assert sealer.run_scan_cycle(db, settings, now=NOW).states[project.rel_path] is (
+        ProjectState.CHANGED
+    )
+
+    job_id = sealer.request_verify_now(db, project.id, NOW)
+    run_all_jobs(db, settings)
+    done = db.get_project(project.id)
+    assert done is not None and done.state is ProjectState.SEALED
+    assert done.last_generation_no == 2 and done.last_verified_at is not None
+    statuses = {r.rel_path: r.status for r in db.get_verify_results(project.id, job_id)}
+    assert statuses == {"01_MASTERS/m.mov": "ok", "02_NEW/n.mov": "added"}
+    assert "02_NEW/n.mov" in db.get_sealed_files(project.id)
+    verify = run_cli("ascmhl-debug", "verify", folder)
+    assert verify.returncode == 0, verify.stdout + verify.stderr
+    assert sealer.run_scan_cycle(db, settings, now=NOW).states[project.rel_path] is (
+        ProjectState.SEALED
+    )
+    with pytest.raises(sealer.SealerError, match="sealed or changed"):
+        sealer.request_verify_now(db, db.list_projects()[1].id, NOW)  # unsealed
 
 
 # --- issue #1: orphan manifests ----------------------------------------------------------------

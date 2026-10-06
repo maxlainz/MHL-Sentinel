@@ -666,39 +666,57 @@ def request_seal(db: Database, project_id: int, now: datetime) -> int:
     return job_id
 
 
-_CANCELLABLE = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION, JobKind.VERIFY})
+_CANCELLABLE = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION, JobKind.VERIFY, JobKind.APPEND})
 _STATE_AFTER_CANCEL = {
     JobKind.SEAL: ProjectState.UNSEALED,
     JobKind.ACCEPT_NEW_VERSION: ProjectState.NEEDS_REVIEW,
+    JobKind.APPEND: ProjectState.CHANGED,  # D74: an Update now taken back
     JobKind.VERIFY: ProjectState.SEALED,  # D63: a cancelled Verify now writes no generation
 }
 
 
 def is_cancellable(job: JobRow) -> bool:
-    """Only the owner's own requests (Seal, Accept, Verify now): automatic jobs would be
-    enqueued again next round, and an append or a scheduled verification is the app's own
-    maintenance (D53, D57, D63)."""
+    """Only the owner's own requests (Seal, Accept, Verify now, Update now): automatic jobs
+    would be enqueued again next round, and an automatic append or a scheduled verification is
+    the app's own maintenance (D53, D57, D63, D74)."""
     return job.trigger is Trigger.MANUAL and job.kind in _CANCELLABLE
+
+
+def _waiting_job(db: Database, project: ProjectRow) -> JobRow | None:
+    """The job a ``queued`` project waits for, or the one a ``hashing`` project runs (also
+    while paused by the working hours)."""
+    if project.state is ProjectState.QUEUED:
+        return db.queued_job(project.id)
+    if project.state is ProjectState.HASHING:
+        return db.running_job(project.id)
+    return None
 
 
 def cancellable_job(db: Database, project: ProjectRow) -> JobRow | None:
     """The manual job a Cancel button can withdraw: a ``queued`` project whose ``seal``,
-    ``accept_new_version`` or ``verify`` (Verify now, D63) waits (D53), or a ``hashing`` project
-    whose manual job is running, also while paused by the working hours (D57; the supervisor
-    aborts it)."""
-    if project.state is ProjectState.QUEUED:
-        job = db.queued_job(project.id)
-    elif project.state is ProjectState.HASHING:
-        job = db.running_job(project.id)
-    else:
-        return None
+    ``accept_new_version``, ``verify`` (Verify now, D63) or ``append`` (Update now, D74) waits
+    (D53), or a ``hashing`` project whose manual job is running, also while paused by the
+    working hours (D57; the supervisor aborts it)."""
+    job = _waiting_job(db, project)
     if job is None or not is_cancellable(job):
         return None
     return job
 
 
+def unsealed_files(db: Database, project_id: int) -> list[FileStat]:
+    """Files the last scan saw that the manifest does not list (or lists with another size or
+    mtime): what an Update now reads (D74). From the DB only, no access to the share."""
+    sealed = db.get_sealed_files(project_id)
+    out: list[FileStat] = []
+    for rel, f in db.get_files(project_id).items():
+        s = sealed.get(rel)
+        if s is None or (s.size, s.mtime_ns) != (f.size, f.mtime_ns):
+            out.append(f)
+    return out
+
+
 def request_cancel(db: Database, project_id: int, now: datetime) -> int:
-    """Cancel button (D53): withdraw a manual Seal/Accept that has not started (or was stopped by
+    """Cancel button (D53): withdraw a manual request that has not started (or was stopped by
     the working hours and sits in the queue again). The project goes back to the state it had
     before the request; hashes already checkpointed (D28) are kept for a later Seal. A running
     job is only the supervisor's to abort (``Supervisor.request_cancel``, D57): touching the DB
@@ -711,39 +729,52 @@ def request_cancel(db: Database, project_id: int, now: datetime) -> int:
         raise SealerError(f"{project.rel_path}: cancel a running job through the supervisor")
     db.set_job_state(job.id, JobState.CANCELLED, now)
     db.log(job.id, "info", "cancelled from the GUI before it ran", now)
-    db.set_state(project_id, _STATE_AFTER_CANCEL[job.kind], review_reason=project.review_reason)
+    state = state_after_cancel(db, project.id, job.kind)
+    db.set_state(project_id, state, review_reason=project.review_reason)
     log.info("%s cancelled for %s (job %d)", job.kind, project.rel_path, job.id)
     return job.id
 
 
-_STARTABLE_NOW = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION})
+def state_after_cancel(db: Database, project_id: int, kind: JobKind) -> ProjectState:
+    """Where a cancelled request leaves its project. A Verify now may have been asked on a
+    ``changed`` project (D74): it goes back to ``changed`` while the last scan still saw files
+    the manifest lacks, so the card does not read ``sealed`` until the next scan."""
+    state = _STATE_AFTER_CANCEL[kind]
+    if state is ProjectState.SEALED and unsealed_files(db, project_id):
+        return ProjectState.CHANGED
+    return state
+
+
+# Seal now / Accept now (D73) and, for automatic jobs too, Seal now / Update now (D74). A
+# Verify now is born with bypass_hours (D63); a scheduled verification is promoted by Verify now.
+_STARTABLE_NOW = frozenset({JobKind.SEAL, JobKind.ACCEPT_NEW_VERSION, JobKind.APPEND})
 
 
 def is_startable_now(job: JobRow) -> bool:
-    """Seal now / Accept now (D73): the owner's own Seal or Accept that still obeys the working
-    hours. A Verify now already runs inside them (D63); automatic jobs never jump the hours."""
-    return is_cancellable(job) and job.kind in _STARTABLE_NOW and not job.bypass_hours
+    """A Seal, Accept or append, manual (D73) or automatic (D74), that still obeys the working
+    hours. Starting it keeps its trigger: an automatic one stays without Cancel."""
+    return job.kind in _STARTABLE_NOW and not job.bypass_hours
 
 
 def startable_now_job(db: Database, project: ProjectRow) -> JobRow | None:
-    """The job a Seal now / Accept now button would start at once (D73): the project's manual
-    ``seal`` or ``accept_new_version``, queued or running (paused by the working hours), not yet
-    ``bypass_hours``."""
-    job = cancellable_job(db, project)
+    """The job a Seal now / Accept now / Update now button would start at once (D73, D74): the
+    project's ``seal``, ``accept_new_version`` or ``append``, queued or running (paused by the
+    working hours), not yet ``bypass_hours``."""
+    job = _waiting_job(db, project)
     if job is None or not is_startable_now(job):
         return None
     return job
 
 
 def request_start_now(db: Database, project_id: int, now: datetime) -> int:
-    """Seal now / Accept now (D73) on a queued manual Seal or Accept: the job gets
-    ``bypass_hours`` (D63) and keeps its place in the queue as ``queued``; the supervisor takes
-    it while the working-hours gate is closed and never pauses it. A running job is only the
-    supervisor's to touch (``Supervisor.request_start_now``), as with Cancel (D57). Returns the
-    job id."""
+    """Seal now / Accept now / Update now (D73, D74) on a queued Seal, Accept or append, manual
+    or automatic: the job gets ``bypass_hours`` (D63), nothing else (trigger and priority stay),
+    and keeps its place in the queue as ``queued``; the supervisor takes it while the
+    working-hours gate is closed and never pauses it. A running job is only the supervisor's to
+    touch (``Supervisor.request_start_now``), as with Cancel (D57). Returns the job id."""
     del now
     project = _require(db, project_id)
-    job = cancellable_job(db, project)
+    job = _waiting_job(db, project)
     if job is None or job.kind not in _STARTABLE_NOW:
         raise SealerError(f"{project.rel_path}: nothing to start now in state {project.state}")
     if job.state is not JobState.QUEUED:
@@ -753,6 +784,26 @@ def request_start_now(db: Database, project_id: int, now: datetime) -> int:
         "%s starts now for %s (job %d, working hours skipped)", job.kind, project.rel_path, job.id
     )
     return job.id
+
+
+def request_update_now(db: Database, project_id: int, now: datetime) -> int:
+    """Update now (D74) on a ``changed`` project, at any hour: a manual ``append`` with
+    ``bypass_hours`` that does not wait for the settle time (D9, D31). Priority as any manual
+    request (+100). The project shows ``queued``; Cancel takes it back to ``changed``. An
+    automatic append already queued is promoted instead of duplicated. Returns the job id."""
+    project = _require(db, project_id)
+    if project.state is not ProjectState.CHANGED or not _is_sealed(project):
+        raise SealerError(
+            f"{project.rel_path}: Update now needs state changed, not {project.state}"
+        )
+    priority = PRIORITY[JobKind.APPEND] + MANUAL_BONUS
+    with db.transaction():
+        job_id = db.enqueue_job(
+            JobKind.APPEND, project_id, Trigger.MANUAL, priority, now, bypass_hours=True
+        )
+        db.set_state(project_id, ProjectState.QUEUED)
+    log.info("update now requested for %s (job %d)", project.rel_path, job_id)
+    return job_id
 
 
 def request_ignore(db: Database, project_id: int, now: datetime) -> None:
@@ -796,15 +847,22 @@ def request_postpone(db: Database, project_id: int, now: datetime) -> None:
     log.info("review postponed for %s", project.rel_path)
 
 
+_VERIFIABLE = frozenset({ProjectState.SEALED, ProjectState.CHANGED})
+
+
 def request_verify_now(db: Database, project_id: int, now: datetime) -> int:
     """Verify now (D63): a manual ``verify`` (priority manual +100) that also runs inside working
     hours (``bypass_hours``: the supervisor runs it with the gate closed and never pauses it).
-    Only for ``sealed`` projects; the project shows ``queued`` until it starts, and Cancel
-    withdraws it (back to ``sealed``). Returns the job id; a verification the scheduler had
-    already queued is promoted instead of duplicated."""
+    For ``sealed`` and ``changed`` projects (D74; the new files of a ``changed`` one join the
+    generation it writes as ``original``, as in any verification); the project shows ``queued``
+    until it starts, and Cancel withdraws it (back to ``sealed`` or ``changed``). Returns the
+    job id; a verification the scheduler had already queued is promoted instead of
+    duplicated."""
     project = _require(db, project_id)
-    if project.state is not ProjectState.SEALED or not _is_sealed(project):
-        raise SealerError(f"{project.rel_path}: Verify now needs state sealed, not {project.state}")
+    if project.state not in _VERIFIABLE or not _is_sealed(project):
+        raise SealerError(
+            f"{project.rel_path}: Verify now needs state sealed or changed, not {project.state}"
+        )
     priority = PRIORITY[JobKind.VERIFY] + MANUAL_BONUS
     with db.transaction():
         job_id = db.enqueue_job(
@@ -987,11 +1045,12 @@ def run_job(
 ) -> None:
     """Run one queued job to completion, review, requeue (``Stopped``) or failure.
 
-    ``cancel`` (the Cancel button, D57) aborts a manual ``seal``/``accept_new_version`` or a
-    Verify now (D63) at the next file like ``stop`` does, but the job ends ``cancelled`` and the
-    project goes back to the state it had before the request; it is ignored for any other job.
-    If both are set, cancel wins. Either way nothing is written: the generation is only written
-    after the last file.
+    ``cancel`` (the Cancel button, D57) aborts a manual ``seal``/``accept_new_version``, a
+    Verify now (D63) or an Update now (D74) at the next file like ``stop`` does, but the job
+    ends ``cancelled`` and the project goes back to the state it had before the request; it is
+    ignored for any other job. If both are set, cancel wins. Either way nothing is written: the
+    generation is only written after the last file. Nothing here waits for the settle time: an
+    Update now starts as soon as the hasher takes it.
 
     ``on_progress(files_done, files_total, bytes_done, bytes_total)`` is called after each
     progress write to the DB (the supervisor turns it into ``job.progress`` events).
@@ -1053,9 +1112,8 @@ def run_job(
             return
         if cancel is not None and cancel.is_set():  # D57: the owner took the request back
             ctx.finish(JobState.CANCELLED)
-            db.set_state(
-                project.id, _STATE_AFTER_CANCEL[job.kind], review_reason=project.review_reason
-            )
+            state = state_after_cancel(db, project.id, job.kind)
+            db.set_state(project.id, state, review_reason=project.review_reason)
             ctx.log("info", "cancelled while reading; hashes already done are kept")
             return
         db.set_job_state(job.id, JobState.QUEUED, now_fn())
