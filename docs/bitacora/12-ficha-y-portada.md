@@ -10,5 +10,8 @@
 ## Release
 `v0.9.0` (PR #34 y el de release). Sin conceptos nuevos para el vault: son cambios de GUI.
 
+## Portada pulida (`v0.10.0`)
+El owner vio la portada de D76 poco clara. Se le enseñó una maqueta HTML con dos variantes y eligió la A (D77): estado en la barra superior fija, título con frase de recuento, buscador con botón, pastillas por grupo, secciones con título, número y propósito, filas en columnas. Revisada con capturas de Chrome headless (proxy que responde 404 a `/events`) en claro y oscuro. Sin conceptos nuevos para el vault.
+
 ## Siguiente paso
 Comprobar que Watchtower sube `v0.9.0` y mirar ambas pantallas en el navegador con el archivo real.
