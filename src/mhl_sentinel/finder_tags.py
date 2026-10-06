@@ -8,8 +8,11 @@ xattr ``user.DosStream.<stream>:$DATA`` with one trailing NUL byte. The containe
 folder on disk, not through SMB, so it writes that exact form. That the NAS stores tags this way
 is an assumption until it is measured there (D70).
 
-The app only adds or removes its own three tags and keeps any other tag the team has set. A tag
-change touches neither file contents nor the folder mtime, so it never shows up as a change.
+With the option on, the app owns the tags of a project folder: it leaves exactly one of its
+three tags (none for ``ignored``) and removes any other, and it puts right a tag changed by hand,
+so the tag always tells the real state and cannot be faked from the Finder (D72). With the option
+off it touches nothing. A tag change touches neither file contents nor the folder mtime, so it
+never shows up as a change.
 
 The macOS SMB client caches a folder listing, tags of the subfolders included, for as long as
 that folder's mtime does not change (see the note `Caché de directorios del cliente SMB en
@@ -70,15 +73,8 @@ def read_raw(path: Path) -> bytes | None:
     return raw[:-1] if raw.endswith(b"\0") else raw
 
 
-def write_raw(path: Path, data: bytes | None) -> None:
-    """Store ``data`` as the stream, or remove it (``None``)."""
-    if data is None:
-        try:
-            os.removexattr(path, XATTR)  # type: ignore[attr-defined,unused-ignore]
-        except OSError as exc:
-            if not _xattr_missing(exc):
-                raise
-        return
+def write_raw(path: Path, data: bytes) -> None:
+    """Store ``data`` as the stream."""
     os.setxattr(path, XATTR, data + b"\0")  # type: ignore[attr-defined,unused-ignore]
 
 
@@ -95,33 +91,26 @@ def decode(data: bytes | None) -> list[str] | None:
     return value
 
 
-def encode(entries: list[str]) -> bytes | None:
-    if not entries:
-        return None
+def encode(entries: list[str]) -> bytes:
     return plistlib.dumps(entries, fmt=plistlib.FMT_BINARY)
 
 
-def _name(entry: str) -> str:
-    return entry.split("\n", 1)[0]
-
-
-def merged(entries: list[str], tag: str | None) -> list[str]:
-    """``entries`` without the app's tags, plus ``tag`` (with its colour) if given."""
-    out = [e for e in entries if _name(e) not in COLOURS]
-    if tag is not None:
-        out.append(f"{tag}\n{COLOURS[tag]}")
-    return out
+def wanted(tag: str | None) -> list[str]:
+    """The whole tag list a project folder must carry: the app's tag alone, or nothing."""
+    return [] if tag is None else [f"{tag}\n{COLOURS[tag]}"]
 
 
 def apply(path: Path, tag: str | None) -> bool:
-    """Leave ``path`` with ``tag`` as the only app tag (``None``: none). True if it wrote."""
-    entries = decode(read_raw(path))
-    if entries is None:
-        return False  # never overwrite a stream we cannot read
-    new = merged(entries, tag)
-    if new == entries:
+    """Leave ``path`` with exactly ``tag`` (``None``: no tag at all). True if it wrote.
+
+    Any other tag goes, whoever set it and whatever its colour or name, and so does a stream
+    that cannot be read: a tag nobody can fake is the point (D72). "No tag" is written as an
+    empty list rather than by removing the stream, so the Finder does not fall back to a colour
+    label left in the folder's Finder info (unmeasured, #24)."""
+    want = wanted(tag)
+    if decode(read_raw(path)) == want:
         return False
-    write_raw(path, encode(new))
+    write_raw(path, encode(want))
     return True
 
 
@@ -132,42 +121,47 @@ def touch(path: Path) -> None:
 
 @dataclass
 class TagSync:
-    """Brings the folders' tags in line with the project states, writing only on a change.
+    """Brings the folders' tags in line with the project states (D70, D72).
 
-    ``applied`` remembers what each project got (or failed to get) so a tick writes nothing when
-    no state changed and an error is reported once, not every minute. After a restart it is
-    empty, so every folder is checked once; with tags disabled that clears any left behind.
+    Every call reads the tags of every project folder and rewrites the ones that differ, so a
+    tag changed by hand in the Finder is put right at the next tick. Reading one small xattr per
+    project is cheap; writing happens only on a difference. ``reported`` remembers which failure
+    went to the log so an error is reported once, not every minute.
     """
 
     apply_fn: Callable[[Path, str | None], bool] = apply
     touch_fn: Callable[[Path], None] = touch
-    applied: dict[int, str | None] = field(default_factory=dict)
+    reported: dict[int, str | None] = field(default_factory=dict)
     supported: bool = field(default_factory=lambda: hasattr(os, "setxattr"))  # not on macOS
 
     def sync(self, db: Database, archive_root: Path, enabled: bool) -> list[str]:
-        """Returns the error messages (one per project and state). With tags off, a failure
-        to clean up is not reported: the folder may simply not support extended attributes."""
+        """Returns the error messages (one per project and tag). With tags off it does
+        nothing at all: the folders are the team's again (D72)."""
         errors: list[str] = []
-        if not self.supported:
+        if not self.supported or not enabled:
+            self.reported.clear()
             return errors
         parents: dict[Path, str] = {}  # folder to touch → a project in it, for the message
-        for project in db.list_projects():
-            if project.state is ProjectState.MISSING:
-                self.applied.pop(project.id, None)
+        projects = db.list_projects()
+        live = {p.id for p in projects if p.state is not ProjectState.MISSING}
+        for gone in self.reported.keys() - live:  # SQLite may reuse a forgotten project's id
+            del self.reported[gone]
+        for project in projects:
+            if project.id not in live:
                 continue
-            tag = tag_for(project.state) if enabled else None
-            if project.id in self.applied and self.applied[project.id] == tag:
-                continue
-            self.applied[project.id] = tag
+            tag = tag_for(project.state)
             folder = archive_root / project.rel_path
             try:
                 if self.apply_fn(folder, tag):
                     parents.setdefault(folder.parent, project.rel_path)
             except OSError as exc:
-                if enabled:
+                if project.id not in self.reported or self.reported[project.id] != tag:
+                    self.reported[project.id] = tag
                     errors.append(
                         f"Finder tag not set on {project.rel_path}: {exc.strerror or exc}"
                     )
+                continue
+            self.reported.pop(project.id, None)
         for parent, rel_path in parents.items():
             try:
                 self.touch_fn(parent)

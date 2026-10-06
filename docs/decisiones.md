@@ -398,5 +398,13 @@ Sealing
 
 ---
 
+## D72 — Las etiquetas de Finder son de la app: siempre el estado, sin falsear a mano
+- **Contexto**: con D70 la app solo ponía o quitaba sus tres etiquetas, conservaba las del equipo y escribía solo cuando cambiaba un estado. El owner pide limpiar las etiquetas que ya tenían las carpetas y que la etiqueta herede siempre el estado y no se pueda falsear a mano: con D70, una «MHL OK» puesta a mano en un proyecto sin sellar, o una verde con otro nombre, se quedaba hasta el siguiente cambio de estado.
+- **Opciones**: qué se limpia: (1) todas las etiquetas de la carpeta de proyecto, (2) solo las verdes, amarillas y rojas, (3) solo las «MHL …»; cuándo se corrige un cambio manual: (a) en cada pasada, también en horario laboral, (b) solo fuera del horario laboral; con la opción apagada: (i) quitar solo las de la app, como en D70, (ii) no tocar nada.
+- **Elección**: del owner, (1)+(b)+(ii). Con la opción encendida, la app es dueña de las etiquetas de cada carpeta de proyecto: deja exactamente la de su estado (ninguna para `ignored`) y borra cualquier otra, sea quien sea quien la puso, y también un atributo que no sabe leer. En cada pasada fuera del horario laboral relee todas las carpetas y reescribe las que difieren, así que un cambio manual dura hasta la siguiente pasada fuera de horario. «Sin etiqueta» se escribe como lista vacía y no borrando el atributo, para que el Finder no vuelva a mostrar el color antiguo guardado en la información de Finder de la carpeta (supuesto sin medir, añadido al #24). Con la opción apagada no toca nada: las carpetas vuelven a ser del equipo. Las subcarpetas no se tocan nunca. Un fallo va al log una vez por proyecto y etiqueta. Sustituye en D70 las frases «solo pone o quita sus tres etiquetas y conserva las del equipo; no sobrescribe un atributo que no sabe leer», «solo cuando cambia el estado» y «apagar la opción las quita».
+- 2026-10-06.
+
+---
+
 ## Pendiente de entrevista
 Prioridad del NAS al llegar al backlog de 95 (¿«Seal all»?), notificaciones (D22).

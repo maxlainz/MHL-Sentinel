@@ -108,8 +108,9 @@
       <label class="chip"><input type="checkbox" name="finder_tags" value="1"
              {% if form.values.finder_tags %}checked{% endif %}><span>Tag project folders by state</span></label>
       <small>Green "MHL OK" when sealed, yellow "MHL pendiente" while waiting or sealing, red
-        "MHL revisar" when it needs review. Tags change only outside working hours; turning this
-        off removes them. Other tags are left alone.</small>
+        "MHL revisar" when it needs review. The app owns the tags of project folders: any other
+        tag is removed and a tag changed by hand is put back, outside working hours. Turning this
+        off leaves the tags as they are.</small>
       {{ envnote(env_overrides, "finder_tags") }}
     </div>
   </section>
