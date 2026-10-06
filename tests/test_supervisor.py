@@ -945,7 +945,7 @@ def test_begin_stop_before_the_loop_exists(tmp_path: Path) -> None:
 @pytest.mark.parametrize("working", [False, True])
 def test_tick_syncs_finder_tags_outside_working_hours_only(tmp_path: Path, working: bool) -> None:
     """D70: tags follow the states at each tick, but never inside working hours (D33); a failure
-    reaches the activity log once."""
+    reaches the activity log once although every tick tries again (D72)."""
     archive = tmp_path / "archive"
     (archive / "2025" / "2025-01_CLIENTE-CAMPANA").mkdir(parents=True)
     (archive / "2025" / "2025-01_CLIENTE-CAMPANA" / "a.mov").write_bytes(b"x")  # not empty (D67)
@@ -972,7 +972,8 @@ def test_tick_syncs_finder_tags_outside_working_hours_only(tmp_path: Path, worki
             if working:
                 assert calls == [] and tagged == []
             else:
-                assert calls == [(archive / "2025" / "2025-01_CLIENTE-CAMPANA", "MHL pendiente")]
+                folder = archive / "2025" / "2025-01_CLIENTE-CAMPANA"
+                assert calls == [(folder, "MHL pendiente")] * 2  # rechecked at every tick (D72)
                 assert tagged == [
                     "Finder tag not set on 2025/2025-01_CLIENTE-CAMPANA: Operation not permitted"
                 ]

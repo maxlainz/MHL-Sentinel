@@ -20,7 +20,8 @@
   yield the same way, so it does not sit paused (or fail file after file) on a folder that is
   gone, and Retire (D60) is not blocked by it.
 - With ``finder_tags`` on (D70), each tick outside working hours brings the Finder tag of every
-  project folder in line with its state (``finder_tags.TagSync``); off, it removes them.
+  project folder in line with its state and puts right any tag changed by hand
+  (``finder_tags.TagSync``, D72); off, it touches nothing.
 
 Every exception inside a tick or a job is logged and published as a ``log`` event; nothing kills
 the loop or the thread.

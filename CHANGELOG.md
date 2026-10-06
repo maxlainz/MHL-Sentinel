@@ -4,6 +4,12 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/). Versionado
 
 ## [Unreleased]
 
+### Cambiado
+- Etiquetas de Finder: con la opción encendida, la app es dueña de las etiquetas de cada carpeta de proyecto. Borra las que ya hubiera (también las del equipo) y corrige en la siguiente pasada fuera del horario laboral cualquier etiqueta cambiada a mano, así que la etiqueta siempre dice el estado real. Con la opción apagada ya no quita nada (D72).
+
+### Decidido
+- D72: ver `docs/decisiones.md`.
+
 ## [0.7.1] - 2026-10-05 — Mismo código que 0.7.0
 
 ### Corregido
