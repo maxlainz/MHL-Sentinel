@@ -1,19 +1,26 @@
 {% extends "base.html" %}
 {% block nav %}
 <form class="inline" method="post" action="/scan-now"
-      hx-post="/scan-now" hx-target="#status-header" hx-swap="outerHTML">
+      hx-post="/scan-now" hx-target="#status-alerts" hx-swap="outerHTML">
   <button type="submit" class="btn small quiet" title="Look for new and changed projects now. It only lists folders; reading files waits for the end of working hours.">Scan now</button>
 </form>
 <a href="/settings" class="btn small ghost">Settings</a>
 {% endblock %}
 {% block content %}
-<div hx-ext="sse" sse-connect="/events">
-  {% include "_header.html" %}
+<div>
   <div class="layout">
     <main>
-      <input class="filter search" id="project-search" type="search" placeholder="Search projects"
-             aria-label="Search projects" autocomplete="off">
-      <p class="hint" id="no-match" hidden>No project matches.</p>
+      <h1 class="title">Projects</h1>
+      {% include "_context.html" %}
+      <form class="search" id="search-form" role="search">
+        <label class="search-field">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.5 10.5 3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          <input id="project-search" type="search" placeholder="Project, client or year"
+                 aria-label="Search projects" autocomplete="off">
+        </label>
+        <button class="btn" type="submit">Search</button>
+        <span class="searchnote" id="search-note" data-idle="Searches every section, sealed ones too.">Searches every section, sealed ones too.</span>
+      </form>
       {% include "_projects.html" %}
       {% if strays %}
       <section class="section">

@@ -184,7 +184,10 @@ def test_counters_and_inbox_row_meta(env: Env) -> None:
     # file_count of one: singular
     db.update_project_fields(env.ids["sealed"], file_count=1, total_bytes=None)
     box = views.inbox(db, db.list_projects(), env.ref.value, None, NOW)
-    assert [r.meta for r in box.quiet] == ["1 file"]
+    assert [r.meta for r in box.quiet] == ["1 file"] and box.quiet[0].size_text == ""
+    db.update_project_fields(env.ids["sealed"], total_bytes=2 * 10**9)
+    box = views.inbox(db, db.list_projects(), env.ref.value, None, NOW)
+    assert (box.quiet[0].meta, box.quiet[0].size_text) == ("1 file", "2.0 GB")
 
 
 def test_next_verification_without_now_is_never_overdue(env: Env) -> None:
@@ -218,28 +221,7 @@ def test_detail_sentence_variants(env: Env) -> None:
     )
 
 
-# --- views: headline, history, activity -------------------------------------------------------
-
-
-def test_headline_remaining_tones(env: Env) -> None:
-    db = env.db
-    for key in ("needs_review", "unsealed", "ignored"):
-        db.delete_project(env.ids[key])
-    only_sealed = db.list_projects()
-    assert views.headline([], True) == views.Headline("calm", "No projects found yet.")
-    assert views.headline(only_sealed, False) == views.Headline(
-        "alert", "The archive is not reachable."
-    )
-    db.set_state(env.ids["sealed"], ProjectState.IGNORED)
-    assert views.headline(db.list_projects(), True).text == "Every project is ignored."
-    db.set_state(env.ids["sealed"], ProjectState.CHANGED)
-    assert views.headline(db.list_projects(), True).text == (
-        "1 project has new files waiting to be added."
-    )
-    db.set_state(env.ids["sealed"], ProjectState.HASHING)
-    assert views.headline(db.list_projects(), True).text == "1 project is being sealed."
-    db.set_state(env.ids["sealed"], ProjectState.MISSING)
-    assert views.headline(db.list_projects(), True).text == "1 project is missing from the disk."
+# --- views: history, activity -------------------------------------------------------
 
 
 def test_load_history_without_history_and_with_a_broken_one(tmp_path: Path) -> None:

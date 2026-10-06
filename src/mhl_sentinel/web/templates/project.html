@@ -2,7 +2,7 @@
 {% block title %}{{ p.name }} · MHL Sentinel{% endblock %}
 {% block nav %}<a href="/settings" class="btn small ghost">Settings</a>{% endblock %}
 {% block content %}
-<div hx-ext="sse" sse-connect="/events">
+<div>
   <p><a class="back" href="/">← Inbox</a></p>
   {% include "_project_card.html" %}
 

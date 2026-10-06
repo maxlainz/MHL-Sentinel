@@ -185,16 +185,20 @@ def test_main_page_lists_projects_with_badges_and_counters(
     html = r.text
     assert 'sse-connect="/events"' in html
     assert "sse:project.state" in html and "sse:cycle.finished" in html
-    assert "Archive: <strong>OK</strong>" in html
-    assert "last round 23:14" in html  # 21:14 UTC shown in Europe/Madrid
+    assert 'class="pill ok"' in html and "Archive OK" in html
+    assert "Last round 23:14" in html  # 21:14 UTC shown in Europe/Madrid
     flat = re.sub(r"\s+", " ", html)
-    assert "1 project needs your decision." in flat  # the headline
-    assert "3 projects watched, 1 ignored" in flat  # ignored ones are not counted
+    assert '<h1 class="title">Projects</h1>' in html
+    assert (  # D77: the sentence counts the three watched groups; the ignored one is mentioned
+        "3 project folders watched in the archive. 1 needs a decision, 1 is not sealed yet, "
+        "1 is sealed, 1 is ignored." in flat
+    )
     assert 'Needs your decision <span class="count">1</span>' in flat
     assert 'Not sealed yet <span class="count">1</span>' in flat
     assert "Review changes" in html and 'action="/projects/' in html
     assert re.search(r'action="/projects/\d+/seal\?from=inbox"', html)  # one-click Seal
     assert 'id="activity"' in html and "Outside working hours" in html
+    assert 'class="appbar"' in html and 'href="/settings"' in html  # D77: the bar holds the nav
     lights = re.findall(r'<li[^>]*data-state="(\w+)"[^>]*>\s*<span class="light (\w+)"', html)
     assert lights == [
         ("needs_review", "red"),
@@ -214,13 +218,17 @@ def test_fragments(env: Env) -> None:
     header = env.client.get("/fragments/header").text
     assert 'id="status-header"' in header
     assert re.search(r"the app works until (\w{3} )?(\d{4}-\d\d-\d\d )?09:00", header)
-    assert "inbox-changed from:body" in header  # buttons refresh the headline
+    assert 'title="Europe/Madrid"' in header  # the zone is a tooltip, not visible text
+    assert "inbox-changed from:body" in header  # buttons refresh the status bar
     activity = env.client.get("/fragments/activity").text
     assert 'id="activity"' in activity and "sse:job.progress" in activity
     env.sup.state = FakeStatus(working_now=True, archive_reachable=False)
     header = env.client.get("/fragments/header").text
-    assert "The archive is not reachable." in header
+    assert 'class="pill bad"' in header and "Archive not reachable" in header
     assert "Working hours: the app waits until" in header
+    alerts = env.client.get("/fragments/alerts").text  # D77: red strip under the bar
+    assert 'class="strip"' in alerts and "The archive share is not answering" in alerts
+    assert 'class="strip"' in env.client.get("/").text
     assert "Waiting for the archive" in env.client.get("/fragments/activity").text
     assert env.client.get("/").status_code == 200  # degrades, does not crash
 
@@ -241,12 +249,12 @@ def test_review_detail_shows_items_and_buttons(env: Env) -> None:
 
 
 def test_header_shows_the_root_manifest_date(env: Env) -> None:
-    assert "Root manifest: not yet" in env.client.get("/fragments/header").text
+    assert 'title="Root manifest: not yet"' in env.client.get("/fragments/header").text
     env.db.set_kv("last_root_manifest_at", "2026-10-01T23:30:00.000000Z")
     header = env.client.get("/fragments/header").text
-    assert "Root manifest: 2026-10-02 01:30" in header  # Europe/Madrid
+    assert 'title="Root manifest: 2026-10-02 01:30"' in header  # Europe/Madrid, in a tooltip
     assert "sse:root.updated" in header
-    assert "Root manifest: 2026-10-02 01:30" in env.client.get("/").text
+    assert 'title="Root manifest: 2026-10-02 01:30"' in env.client.get("/").text
 
 
 def test_verification_review_shows_the_verify_results(env: Env) -> None:
@@ -420,6 +428,7 @@ def test_no_cancel_while_verifying(env: Env) -> None:
 def test_scan_now(env: Env) -> None:
     r = env.client.post("/scan-now", headers=HX)
     assert r.status_code == 200 and "Scan requested" in r.text
+    assert 'id="status-alerts"' in r.text and 'class="bar-notice"' in r.text
     assert env.sup.scans == 1
 
 
@@ -569,34 +578,79 @@ def test_detail_reads_generations_from_the_history(env: Env) -> None:
 # --- inbox (proposal D, D54) ---------------------------------------------------------------
 
 
-def _headline(env: Env, archive_ok: bool = True) -> views.Headline:
-    return views.headline(env.db.list_projects(), archive_ok)
+def _sentence(env: Env) -> str:
+    return views.context_sentence(env.db.list_projects())
 
 
-def test_headline_tones_follow_every_state(env: Env) -> None:
+def _chips(html: str) -> list[tuple[str, str]]:
+    """(group, count) of every chip of the fragment, in order."""
+    return re.findall(r'data-chip="(\w+)"[^>]*>.*?<b>(\d+)</b>', html)
+
+
+def test_context_sentence_follows_every_state(env: Env) -> None:
     ids, db = env.ids, env.db
-    assert _headline(env) == views.Headline("alert", "1 project needs your decision.")
-    assert _headline(env, archive_ok=False).text == "The archive is not reachable."
-    db.set_state(ids["needs_review"], ProjectState.SEALED)
-    assert _headline(env) == views.Headline("wait", "1 project is not sealed yet.")
+    assert _sentence(env) == (
+        "3 project folders watched in the archive. 1 needs a decision, 1 is not sealed yet, "
+        "1 is sealed, 1 is ignored."
+    )
+    assert "1 needs a decision" in env.client.get("/fragments/context").text
+    db.set_state(ids["needs_review"], ProjectState.ERROR)
     db.set_state(ids["unsealed"], ProjectState.QUEUED)  # a Seal was pressed
-    assert _headline(env) == views.Headline("wait", "1 project is being sealed.")
-    header = env.client.get("/fragments/header").text
-    assert "being sealed" in header and "Every project is sealed" not in header
-    db.set_state(ids["unsealed"], ProjectState.HASHING)
-    assert _headline(env).text == "1 project is being sealed."
-    db.set_state(ids["unsealed"], ProjectState.CHANGED)
-    assert _headline(env) == views.Headline("wait", "1 project has new files waiting to be added.")
-    db.set_state(ids["unsealed"], ProjectState.SEALED)
-    assert _headline(env) == views.Headline("calm", "All quiet. Every project is sealed.")
-    assert '<h2 class="label">Sealed' in env.client.get("/fragments/projects").text
+    assert _sentence(env).endswith(
+        "1 needs a decision, 1 is in the queue, 1 is sealed, 1 is ignored."
+    )
+    db.set_state(ids["needs_review"], ProjectState.HASHING)
+    db.set_state(ids["sealed"], ProjectState.CHANGED)
+    assert _sentence(env) == (  # zero groups are left out
+        "3 project folders watched in the archive. 3 are in the queue, 1 is ignored."
+    )
+    for key in ("needs_review", "unsealed"):
+        db.set_state(ids[key], ProjectState.UNSEALED)
+    db.set_state(ids["sealed"], ProjectState.SEALED)
+    assert _sentence(env).startswith("3 project folders watched in the archive. 2 are not sealed")
+    db.set_state(ids["needs_review"], ProjectState.MISSING)
+    db.set_state(ids["unsealed"], ProjectState.MISSING)
+    assert "2 need a decision, 1 is sealed" in _sentence(env)
+    for key in ("sealed", "needs_review"):
+        db.set_state(ids[key], ProjectState.IGNORED)
+    db.delete_project(ids["unsealed"])
+    assert _sentence(env) == "Every project is ignored: 3 in all. Open one to watch it again."
+    inbox = env.client.get("/fragments/projects").text
+    assert 'id="fold-ignored"' in inbox and "Show 3 ignored" in inbox and "data-chip" not in inbox
+    for pid in (ids["sealed"], ids["needs_review"], ids["ignored"]):
+        db.delete_project(pid)
+    assert _sentence(env) == "No projects found yet. The first round lists them."
+    assert "No projects found yet." in env.client.get("/").text
+    db.upsert_project("2025/2025-12_Z-ONE", "2025-12_Z-ONE", True, NOW)
+    assert _sentence(env).startswith("1 project folder watched in the archive.")
+
+
+def test_chips_count_the_groups_and_hide_the_empty_ones(env: Env) -> None:
+    ids, db = env.ids, env.db
+    html = env.client.get("/fragments/projects").text
+    assert _chips(html) == [("all", "3"), ("decide", "1"), ("unsealed", "1"), ("sealed", "1")]
+    assert 'data-group="decide"' in html and 'data-group="queue"' not in html
+    assert 'aria-pressed="true">All' in html  # JS moves the pressed chip; All is the default
+    db.set_state(ids["unsealed"], ProjectState.QUEUED)
+    db.set_state(ids["needs_review"], ProjectState.SEALED)
+    html = env.client.get("/fragments/projects").text
+    assert _chips(html) == [("all", "3"), ("queue", "1"), ("sealed", "2")]
+    assert 'data-group="queue"' in html and 'data-group="decide"' not in html
     for key in ("sealed", "needs_review", "unsealed"):
         db.set_state(ids[key], ProjectState.IGNORED)
-    assert _headline(env).text == "Every project is ignored."
-    inbox = env.client.get("/fragments/projects").text
-    assert "Every project is ignored." in inbox and 'id="fold-ignored"' in inbox
-    assert "Show 4 ignored" in inbox and ">Sealed <" not in inbox
-    assert views.headline([], True).text == "No projects found yet."
+    assert _chips(env.client.get("/fragments/projects").text) == []  # nothing to filter
+
+
+def test_every_page_has_the_status_bar(env: Env) -> None:
+    pages = ["/", f"/projects/{env.ids['sealed']}", "/settings"]
+    for page in pages:
+        html = env.client.get(page).text
+        assert 'class="appbar"' in html and 'id="status-header"' in html, page
+        assert html.count('sse-connect="/events"') == 1, page
+        assert "Archive OK" in html and 'id="status-alerts"' in html, page
+    env.sup.state = FakeStatus(archive_reachable=False)
+    for page in pages:
+        assert 'class="strip"' in env.client.get(page).text, page
 
 
 def test_next_verification_estimate_and_overdue(env: Env) -> None:
@@ -691,9 +745,12 @@ def test_inbox_sections_order_sealed_by_date_and_search(env: Env) -> None:
     html = env.client.get("/").text
     assert _sections(html) == ["Needs your decision", "Not sealed yet", "Queue", "Sealed"]
     assert html.index('class="label">Queue') < html.index('class="label">Sealed')
-    assert 'type="search" placeholder="Search projects"' in html
+    assert 'type="search"' in html and 'placeholder="Project, client or year"' in html
+    assert '<form class="search" id="search-form"' in html and ">Search</button>" in html
+    assert 'data-idle="Searches every section, sealed ones too."' in html
     assert html.index('id="project-search"') < html.index('id="projects"')  # outside the fragment
     assert "sealed 2026-10-02" in html and "<li" in html and 'data-name="2025-03_A-TIE' in html
+    assert 'class="why">Newest first</span>' in html and 'class="num"' in html
     assert "Show 2 ignored" in html and "All projects" not in html and "In progress" not in html
     assert "fold-sealed" not in html  # 4 sealed fit in the preview
     for i in range(4):
@@ -708,14 +765,12 @@ def test_inbox_closing_line_and_empty_states(env: Env) -> None:
         db.set_state(pid, ProjectState.UNSEALED)
     html = env.client.get("/fragments/projects").text
     assert ">Sealed <" not in html and "Queue" not in html
-    assert "Verification starts once a project is sealed. 4 projects watched." in " ".join(
-        html.split()
-    )
+    assert "Verification starts once a project is sealed." in " ".join(html.split())
     assert "fold-ignored" not in html
     for pid in env.ids.values():
         db.delete_project(pid)
     html = env.client.get("/fragments/projects").text
-    assert "No projects found yet." in html and "Needs your decision" not in html
+    assert "Needs your decision" not in html and "Verification starts" not in html
 
 
 def test_detail_sentence_per_state(env: Env) -> None:
@@ -784,7 +839,7 @@ def test_inbox_shows_a_missing_project_as_a_decision(
     html = env.client.get("/").text
     flat = re.sub(r"\s+", " ", html)
     assert 'Needs your decision <span class="count">2</span>' in flat
-    assert "2 projects need your decision." in flat
+    assert "2 need a decision" in flat
     assert "missing: not on disk since 00:00" in flat  # 22:00 UTC is midnight in Madrid
     assert "sealed 2026-10-02" in flat and "10 files" in flat and "verified OK 2026-10-02" in flat
     assert f'data-dialog-open="retire-{pid}"' in html
@@ -797,12 +852,12 @@ def test_inbox_shows_a_missing_project_as_a_decision(
     assert "Ignore" not in card
 
 
-def test_headline_only_missing_is_honest(env: Env) -> None:
-    for state in ("needs_review", "unsealed", "ignored"):
+def test_sentence_with_only_a_missing_project(env: Env) -> None:
+    for state in ("needs_review", "unsealed", "ignored", "sealed"):
         env.db.delete_project(env.ids[state])
     _make_missing(env)
     flat = re.sub(r"\s+", " ", env.client.get("/").text)
-    assert "1 project is missing from the disk." in flat
+    assert "1 project folder watched in the archive. 1 needs a decision" in flat
 
 
 def test_retry_both_paths(env: Env) -> None:
