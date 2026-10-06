@@ -9,18 +9,21 @@
   time (D34), only while the gate is open. Closing the gate pauses the read; ``stop()`` makes the
   current job raise ``Stopped`` at the next block, so it goes back to ``queued`` with its
   checkpoints and no generation is written. ``request_cancel(project_id)`` (the Cancel button,
-  D57) aborts the current manual Seal/Accept/Verify now the same way, but the job ends
-  ``cancelled``.
+  D57) aborts the current manual Seal/Accept/Verify now/Update now the same way, but the job
+  ends ``cancelled``.
 - A job with ``bypass_hours`` (Verify now, D63) is the exception to the gate: the hasher takes
   it while the gate is closed (and only such jobs then), and runs it with a gate of its own that
   is always open, so the working hours never pause it. A job paused by the closed gate would
   hold the single hasher until the evening, so a Verify now asks it to yield: it goes back to
   ``queued`` with its checkpoints, exactly as on ``stop()``.
-- Seal now / Accept now (D73) give a manual Seal or Accept the same ``bypass_hours``. A queued
-  one is only flagged (``sealer.request_start_now``). The current one (``request_start_now``)
-  is flagged and asked to yield, also when the gate happens to be open (it can lag the clock by
-  a tick): back in the queue with its checkpoints, the hasher takes it again at once with the
-  always-open gate. The yield is what swaps the gate; the job reads nothing twice (D28).
+- Seal now / Accept now (D73) give a manual Seal or Accept the same ``bypass_hours``, and Seal
+  now / Update now (D74) an automatic seal or append (which keeps its trigger, so still no
+  Cancel). A queued one is only flagged (``sealer.request_start_now``). The current one
+  (``request_start_now``) is flagged and asked to yield, also when the gate happens to be open
+  (it can lag the clock by a tick): back in the queue with its checkpoints, the hasher takes it
+  again at once with the always-open gate. The yield is what swaps the gate; the job reads
+  nothing twice (D28). Update now on a ``changed`` project (D74) is born a manual append with
+  ``bypass_hours``, like a Verify now.
 - A job whose project the scan cycle finds ``missing`` (D58) or moved (D62) meanwhile is asked to
   yield the same way, so it does not sit paused (or fail file after file) on a folder that is
   gone, and Retire (D60) is not blocked by it.
@@ -224,8 +227,9 @@ class Supervisor:
 
     def request_cancel(self, project_id: int) -> bool:
         """Cancel button on a running job (D57): abort the current job at the next file if it is
-        the project's manual ``seal``, ``accept_new_version`` or ``verify`` (Verify now, D63);
-        True if it was asked to stop. Automatic jobs are never cancelled. Thread-safe."""
+        the project's manual ``seal``, ``accept_new_version``, ``verify`` (Verify now, D63) or
+        ``append`` (Update now, D74); True if it was asked to stop. Automatic jobs are never
+        cancelled. Thread-safe."""
         with self._lock:
             job = self._current_job
             if job is None or job.project_id != project_id or not sealer.is_cancellable(job):
@@ -235,11 +239,11 @@ class Supervisor:
         return True
 
     def request_start_now(self, project_id: int) -> bool:
-        """Seal now / Accept now on the running job (D73): if the current job is the project's
-        manual ``seal`` or ``accept_new_version`` without ``bypass_hours``, flag it in the DB and
-        ask it to yield; it comes back with the always-open gate. True if it was asked. A second
-        click finds the flag already set (the in-memory row is stale until the job restarts)
-        and returns False. Thread-safe."""
+        """Seal now / Accept now / Update now on the running job (D73, D74): if the current job
+        is the project's ``seal``, ``accept_new_version`` or ``append`` (manual or automatic)
+        without ``bypass_hours``, flag it in the DB and ask it to yield; it comes back with the
+        always-open gate. True if it was asked. A second click finds the flag already set (the
+        in-memory row is stale until the job restarts) and returns False. Thread-safe."""
         with self._lock:
             job = self._current_job
             if (
@@ -255,10 +259,11 @@ class Supervisor:
 
     def notify_job_queued(self) -> None:
         """Wake the idle hasher now instead of after ``idle_seconds`` (e.g. after Seal). Also
-        inside working hours: a Verify now (D63) or a Seal now (D73) runs with the gate closed,
-        and a job paused by the gate is asked to yield to it (back to the queue, checkpoints
-        kept). So is the paused job itself if it got ``bypass_hours`` meanwhile: the hasher may
-        have taken it from the queue just before a Seal now flagged it there (D73)."""
+        inside working hours: a Verify now (D63), a Seal now (D73) or an Update now (D74) runs
+        with the gate closed, and a job paused by the gate is asked to yield to it (back to the
+        queue, checkpoints kept). So is the paused job itself if it got ``bypass_hours``
+        meanwhile: the hasher may have taken it from the queue just before a Seal now flagged it
+        there (D73)."""
         if not self.gate.is_set():
             with self._lock:
                 job = self._current_job

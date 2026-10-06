@@ -55,11 +55,13 @@ JOB_LABEL: dict[JobKind, str] = {
     JobKind.RETIRE: "Forgetting",
 }
 VERIFY_NOW_LABEL = "Verify now"  # D63: a manual verification, also inside working hours
-# D73: a manual Seal or Accept started at once, inside working hours.
+# D73, D74: a Seal, Accept or append (manual or automatic) started at once, inside working hours.
 START_NOW_LABEL: dict[JobKind, str] = {
     JobKind.SEAL: "Seal now",
     JobKind.ACCEPT_NEW_VERSION: "Accept now",
+    JobKind.APPEND: "Update now",
 }
+UPDATE_NOW_LABEL = START_NOW_LABEL[JobKind.APPEND]  # D74: also a changed project, any hour
 
 _UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
@@ -142,12 +144,33 @@ def job_label(job: JobRow) -> str:
 
 
 def start_now_label(db: Database, project: ProjectRow, settings: Settings, now: datetime) -> str:
-    """``Seal now`` / ``Accept now`` (D73) for a manual Seal or Accept still bound to the working
-    hours, only while they are on; empty when there is no such button."""
+    """``Seal now`` / ``Accept now`` / ``Update now`` (D73, D74) for a Seal, Accept or append
+    still bound to the working hours, only while they are on; empty when there is no such
+    button."""
     job = sealer.startable_now_job(db, project)
     if job is None or not WorkingHours.from_settings(settings).is_working(now):
         return ""
     return START_NOW_LABEL[job.kind]
+
+
+def can_update_now(project: ProjectRow) -> bool:
+    """Update now (D74): a ``changed`` project, inside or outside working hours."""
+    return project.state is ProjectState.CHANGED and project.last_generation_no is not None
+
+
+def unsealed_bytes(db: Database, project: ProjectRow) -> int:
+    """What an append reads (D74): the files the last scan saw that the manifest lacks. From the
+    DB, so the size in the dialog costs no access to the share."""
+    return sum(f.size for f in sealer.unsealed_files(db, project.id))
+
+
+def read_size(db: Database, project: ProjectRow) -> int | None:
+    """Bytes a start-now or Update now reads: the new files for an append (or a ``changed``
+    project), the whole project for a Seal or Accept."""
+    job = sealer.startable_now_job(db, project)
+    if can_update_now(project) or (job is not None and job.kind is JobKind.APPEND):
+        return unsealed_bytes(db, project)
+    return project.total_bytes
 
 
 def running_job_for(db: Database, project_id: int, current: JobRow | None) -> JobRow | None:
@@ -418,8 +441,13 @@ class InboxRow:
     meta: str = ""  # "142 files · 28.4 GB"
     when: str = ""  # sealed date, for the quiet list
     cancellable: bool = False
-    start_now: str = ""  # D73: "Seal now" / "Accept now", empty without the button
-    size: int | None = None  # bytes, for the start-now confirmation
+    start_now: str = ""  # D73, D74: "Seal now" / "Accept now" / "Update now", or no button
+    update_now: bool = False  # D74: Update now on a changed project, any hour
+    size: int | None = None  # bytes, for the start-now / Update now confirmation
+
+    @property
+    def acts(self) -> bool:
+        return self.cancellable or bool(self.start_now) or self.update_now
 
 
 @dataclass(slots=True)
@@ -430,6 +458,7 @@ class Inbox:
     quiet: list[InboxRow] = field(default_factory=list)  # sealed
     ignored: list[InboxRow] = field(default_factory=list)
     next_verification: str = ""
+    working: bool = False  # inside working hours now: the dialogs warn about the NAS load
 
 
 INBOX_PREVIEW = 6  # unsealed rows shown before "show N more"
@@ -480,9 +509,10 @@ def inbox(
     projects: list[ProjectRow],
     settings: Settings,
     current: JobRow | None,
-    now: datetime | None = None,
+    now: datetime,
 ) -> Inbox:
     box = Inbox(next_verification=next_verification(projects, settings, now))
+    box.working = WorkingHours.from_settings(settings).is_working(now)
     tz = settings.tzinfo
     for p in sorted_projects(projects):
         row = InboxRow(project_view(db, p, settings, current), _meta(p, tz))
@@ -498,9 +528,11 @@ def inbox(
             box.ignored.append(row)
         else:
             row.cancellable = sealer.cancellable_job(db, p) is not None
-            if row.cancellable and now is not None:
-                row.start_now = start_now_label(db, p, settings, now)
-                row.size = p.total_bytes
+            # D73, D74: start-now also on an automatic job, which has no Cancel.
+            row.start_now = start_now_label(db, p, settings, now)
+            row.update_now = can_update_now(p)
+            if row.start_now or row.update_now:
+                row.size = read_size(db, p)
             box.moving.append(row)
     # What moves now goes on top: reading files, then queued, then new files settling.
     order = {ProjectState.HASHING.value: 0, ProjectState.QUEUED.value: 1}

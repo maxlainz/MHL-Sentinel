@@ -192,8 +192,13 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         if project.state is ProjectState.NEEDS_REVIEW and not verification
         else []
     )
-    # D73: Seal now / Accept now, only inside working hours (outside them the job already runs).
-    start_now = views.start_now_label(ctx.db, project, settings, utcnow())
+    # D73, D74: Seal now / Accept now / Update now on a waiting job, only inside working hours
+    # (outside them the job already runs). Update now on a changed project, at any hour (D74).
+    now = utcnow()
+    working = WorkingHours.from_settings(settings).is_working(now)
+    start_now = views.start_now_label(ctx.db, project, settings, now)
+    update_now = views.can_update_now(project)
+    verifiable = project.state in (ProjectState.SEALED, ProjectState.CHANGED)
     generations = project.last_generation_no
     if history.generations:
         generations = len(history.generations)
@@ -216,13 +221,17 @@ def project_context(ctx: WebContext, project: ProjectRow, *, with_history: bool)
         "can_cancel": sealer.cancellable_job(ctx.db, project) is not None,
         "can_start_now": bool(start_now),
         "start_now_label": start_now,
+        "can_update_now": update_now,
+        "read_size": views.read_size(ctx.db, project) if start_now or update_now else None,
+        "working": working,
+        "settle_hours": settings.settle_hours,
         "can_review": project.state is ProjectState.NEEDS_REVIEW,
         "can_ignore": project.state
         not in (ProjectState.IGNORED, ProjectState.HASHING, ProjectState.MISSING),
         "can_retry": project.state is ProjectState.MISSING,
-        "can_verify": project.state is ProjectState.SEALED,
-        "verify_warn": project.state is ProjectState.SEALED
-        and WorkingHours.from_settings(settings).is_working(utcnow()),
+        # D63, D74: Verify now on a sealed or changed project, with a warning in working hours.
+        "can_verify": verifiable and project.last_generation_no is not None,
+        "verify_warn": verifiable and working,
         "can_unignore": project.state is ProjectState.IGNORED,
     }
 
@@ -419,10 +428,18 @@ def project_verify(request: Request, project_id: int) -> Response:
     return _action_response(request, ctx, project_id, notice=notice)
 
 
+_STARTED: dict[JobKind, str] = {
+    JobKind.SEAL: "Sealing started.",
+    JobKind.ACCEPT_NEW_VERSION: "Accept started.",
+    JobKind.APPEND: "Update started.",
+}
+
+
 @router.post("/projects/{project_id}/start-now", response_class=HTMLResponse)
 def project_start_now(request: Request, project_id: int) -> Response:
-    """Seal now / Accept now (D73): a manual Seal or Accept waiting for the end of the working
-    hours (queued, or running but paused by them) starts at once."""
+    """Seal now / Accept now / Update now (D73, D74): a Seal, Accept or append (manual or
+    automatic) waiting for the end of the working hours (queued, or running but paused by them)
+    starts at once."""
     ctx = ctx_of(request)
     project = _get_project(ctx, project_id)
     try:
@@ -439,10 +456,27 @@ def project_start_now(request: Request, project_id: int) -> Response:
             request, ctx, project_id, notice="", error=str(exc), status_code=409
         )
     ctx.supervisor.notify_job_queued()
-    accept = job is not None and job.kind is JobKind.ACCEPT_NEW_VERSION
-    return _action_response(
-        request, ctx, project_id, notice="Accept started." if accept else "Sealing started."
-    )
+    notice = _STARTED[job.kind] if job is not None else _STARTED[JobKind.SEAL]
+    return _action_response(request, ctx, project_id, notice=notice)
+
+
+@router.post("/projects/{project_id}/update-now", response_class=HTMLResponse)
+def project_update_now(request: Request, project_id: int) -> Response:
+    """Update now (D74): the new files of a ``changed`` project join the manifest without
+    waiting for the settle time, also inside working hours."""
+    ctx = ctx_of(request)
+    _get_project(ctx, project_id)
+    now = utcnow()
+    try:
+        sealer.request_update_now(ctx.db, project_id, now)
+    except sealer.SealerError as exc:
+        return _action_response(
+            request, ctx, project_id, notice="", error=str(exc), status_code=409
+        )
+    ctx.supervisor.notify_job_queued()
+    working = WorkingHours.from_settings(ctx.settings).is_working(now)
+    notice = "Update started." if working else "Update queued ahead of the rest."
+    return _action_response(request, ctx, project_id, notice=notice)
 
 
 @router.get("/projects/{project_id}/history.zip")

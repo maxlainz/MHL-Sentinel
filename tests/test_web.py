@@ -976,3 +976,146 @@ def test_finder_tags_are_off_by_default_and_saved_from_the_checkbox(env: Env) ->
     assert re.search(r'name="finder_tags" value="1"\s+checked', r.text)
     env.client.post("/settings", data=_form())
     assert env.ref.value.finder_tags is False
+
+
+# --- D74: start-now on automatic jobs, Update now and Verify now on a changed project ----------
+
+
+def _make_changed(env: Env) -> int:
+    """A sealed project with one new file (2 GB) the manifest does not list yet."""
+    pid = env.db.upsert_project("2025/2025-06_CLIENTE-NUEVOS", "2025-06_CLIENTE-NUEVOS", True, NOW)
+    env.db.update_project_fields(
+        pid, last_generation_no=1, last_sealed_at=NOW, file_count=2, total_bytes=5 * GB
+    )
+    env.db.replace_sealed_files(pid, [SealedFile("01_MASTERS/a.mov", 3 * GB, 1, "aa")])
+    env.db.replace_files(
+        pid, [FileStat("01_MASTERS/a.mov", 3 * GB, 1), FileStat("02_NEW/b.mov", 2 * GB, 2)]
+    )
+    env.db.set_state(pid, ProjectState.CHANGED)
+    return pid
+
+
+def test_seal_now_on_a_queued_automatic_seal_has_no_cancel(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    pid = env.ids["unsealed"]
+    env.db.update_project_fields(pid, total_bytes=12 * GB)
+    job_id = sealer.enqueue(env.db, pid, JobKind.SEAL, Trigger.AUTO, NOW)
+    env.db.set_state(pid, ProjectState.QUEUED)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert "Seal now reads 12.0 GB from the NAS during working hours" in card
+    assert '<p class="footnote">Seal now starts it at once, during working hours.</p>' in card
+    assert "/cancel" not in card
+    inbox = env.client.get("/").text
+    assert f'hx-post="/projects/{pid}/start-now?from=inbox"' in inbox
+    assert f"/projects/{pid}/cancel" not in inbox
+    r = env.client.post(f"/projects/{pid}/start-now?from=inbox", headers=HX)
+    assert r.status_code == 200 and "2025-03_CLIENTE-NUEVO: Sealing started." in r.text
+    job = env.db.get_job(job_id)
+    assert job is not None and job.bypass_hours and job.trigger is Trigger.AUTO
+    assert f"/projects/{pid}/start-now" not in r.text and f"/projects/{pid}/cancel" not in r.text
+
+
+def test_update_now_on_a_queued_or_paused_automatic_append(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: NOW)  # outside working hours: no button
+    pid = _make_changed(env)
+    job_id = sealer.enqueue(env.db, pid, JobKind.APPEND, Trigger.AUTO, NOW)
+    env.db.set_state(pid, ProjectState.QUEUED)
+    assert "/start-now" not in env.client.get(f"/projects/{pid}").text
+
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert "Update during working hours?" in card
+    assert "Update now reads 2.0 GB from the NAS during working hours" in card  # new files only
+    assert "/cancel" not in card
+    inbox = re.sub(r"\s+", " ", env.client.get("/").text)
+    assert f'hx-post="/projects/{pid}/start-now?from=inbox"' in inbox
+    r = env.client.post(f"/projects/{pid}/start-now", headers=HX)
+    assert r.status_code == 200 and "Update started." in r.text
+    job = env.db.get_job(job_id)
+    assert job is not None and job.bypass_hours and job.trigger is Trigger.AUTO
+
+    # Paused while running: the supervisor's to flag.
+    job_id = sealer.enqueue(env.db, env.ids["sealed"], JobKind.APPEND, Trigger.AUTO, NOW)
+    env.db.set_job_state(job_id, JobState.RUNNING, NOW)
+    env.db.set_state(env.ids["sealed"], ProjectState.HASHING)
+    r = env.client.post(f"/projects/{env.ids['sealed']}/start-now", headers=HX)
+    assert r.status_code == 200 and "Update started." in r.text
+    assert env.sup.starts == [env.ids["sealed"]]
+
+
+def test_update_now_on_a_changed_project_outside_working_hours(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: NOW)
+    pid = _make_changed(env)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert f'data-dialog-open="update-{pid}"' in card and "Update now?" in card
+    assert (
+        "If files are still being copied into this project, the update would seal an "
+        "incomplete copy. Continue?" in card
+    )
+    assert "during working hours" not in card
+    assert "without waiting for 168 h without changes" in card
+    # D74: Verify now on a changed project is always confirmed: it also seals the new files.
+    assert f'data-dialog-open="verify-{pid}"' in card and "Verify now?" in card
+    assert (
+        "If files are still being copied into this project, the verification would seal an "
+        "incomplete copy. It also seals the files added since the last seal. Continue?" in card
+    )
+    assert f'<noscript><form class="inline" method="post" action="/projects/{pid}/verify">' in card
+    inbox = re.sub(r"\s+", " ", env.client.get("/").text)
+    assert f'hx-post="/projects/{pid}/update-now?from=inbox"' in inbox
+
+    r = env.client.post(f"/projects/{pid}/update-now?from=inbox", headers=HX)
+    assert r.status_code == 200 and "2025-06_CLIENTE-NUEVOS: Update queued ahead" in r.text
+    assert f"/projects/{pid}/cancel?from=inbox" in r.text
+    job = env.db.queued_job(pid)
+    assert job is not None and job.kind is JobKind.APPEND and job.trigger is Trigger.MANUAL
+    assert job.bypass_hours
+    card = env.client.get(f"/projects/{pid}").text
+    assert "/cancel" in card and "/update-now" not in card and "/start-now" not in card
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 200
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.CHANGED
+
+    r = env.client.post(f"/projects/{env.ids['unsealed']}/update-now", headers=HX)
+    assert r.status_code == 409 and "Update now needs state changed" in r.text
+
+
+def test_update_now_on_a_changed_project_in_working_hours(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: WORKING)
+    pid = _make_changed(env)
+    card = re.sub(r"\s+", " ", env.client.get(f"/projects/{pid}").text)
+    assert "Update during working hours?" in card
+    assert (
+        "the update would seal an incomplete copy. Update now reads 2.0 GB from the NAS during "
+        "working hours and can slow everyone down. Continue?" in card
+    )
+    assert "Verify during working hours?" in card
+    assert (
+        "the verification would seal an incomplete copy. It also seals the files added since "
+        "the last seal. Verify now reads 5.0 GB from the NAS during working hours and can slow "
+        "everyone down. Continue?" in card  # all of it: a verification re-reads everything
+    )
+    inbox = re.sub(r"\s+", " ", env.client.get("/").text)
+    assert "Update now reads 2.0 GB from the NAS" in inbox
+    r = env.client.post(f"/projects/{pid}/update-now", headers=HX)
+    assert r.status_code == 200 and "Update started." in r.text
+
+
+def test_verify_now_on_a_changed_project(env: Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(routes, "utcnow", lambda: NOW)
+    pid = _make_changed(env)
+    r = env.client.post(f"/projects/{pid}/verify", headers=HX)
+    assert r.status_code == 200 and "Verification queued ahead of the rest" in r.text
+    r = env.client.post(f"/projects/{pid}/cancel", headers=HX)
+    assert r.status_code == 200
+    project = env.db.get_project(pid)
+    assert project is not None and project.state is ProjectState.CHANGED  # not "sealed"

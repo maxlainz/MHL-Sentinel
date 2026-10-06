@@ -70,13 +70,16 @@
     <h2 class="label">In progress <span class="count">{{ inbox.moving|length }}</span></h2>
     <ul class="items compact">
       {% for r in inbox.moving %}
-      {% if r.cancellable %}
+      {% if r.acts %}
       {% call item(r) %}
         {% if r.start_now %}{{ dlg.start_now(r.view.id, r.start_now, r.size, "#projects", "?from=inbox", "btn small") }}{% endif %}
+        {% if r.update_now %}{{ dlg.update_now(r.view.id, r.size, inbox.working, "#projects", "?from=inbox", "btn small") }}{% endif %}
+        {% if r.cancellable %}
         <form class="inline" method="post" action="/projects/{{ r.view.id }}/cancel?from=inbox"
               hx-post="/projects/{{ r.view.id }}/cancel?from=inbox" hx-target="#projects" hx-swap="outerHTML">
           <button type="submit" class="btn small quiet">Cancel</button>
         </form>
+        {% endif %}
       {% endcall %}
       {% else %}
       {{ item(r) }}

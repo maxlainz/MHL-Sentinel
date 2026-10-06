@@ -41,7 +41,39 @@
 {{ working_hours_read(id, "verify", "verify", "Verify now", "Verify", size, target, query) }}
 {%- endmacro %}
 
-{# Seal now / Accept now (D73): label is "Seal now" or "Accept now". #}
+{# Seal now / Accept now / Update now (D73, D74): label is one of those three. #}
 {% macro start_now(id, label, size, target, query="", cls="btn") -%}
 {{ working_hours_read(id, "start", "start-now", label, label.split()[0], size, target, query, cls) }}
+{%- endmacro %}
+
+{# A read of a changed project (D74), at any hour and always confirmed: what it seals could be an
+   incomplete copy; the NAS warning only inside working hours. Update now, and Verify now on a
+   changed project (which also seals the new files). #}
+{% macro changed_read(id, key, path, label, verb, noun, extra, size, working, target, query="", cls="btn") -%}
+<button type="button" class="{{ cls }}" data-dialog-open="{{ key }}-{{ id }}">{{ label }}</button>
+<dialog id="{{ key }}-{{ id }}" class="confirm" aria-labelledby="{{ key }}-title-{{ id }}">
+  <form method="post" action="/projects/{{ id }}/{{ path }}{{ query }}"
+        hx-post="/projects/{{ id }}/{{ path }}{{ query }}" hx-target="{{ target }}" hx-swap="outerHTML">
+    <h2 id="{{ key }}-title-{{ id }}">{{ verb }} {% if working %}during working hours{% else %}now{% endif %}?</h2>
+    <p>If files are still being copied into this project, the {{ noun }} would seal an incomplete
+      copy.{% if extra %} {{ extra }}{% endif %}{% if working %} {{ label }} reads {{ size|size }} from the NAS during working
+      hours and can slow everyone down.{% endif %} Continue?</p>
+    <div class="dialog-acts">
+      <button type="submit" class="btn small">{{ label }}</button>
+      <button type="button" class="btn small ghost" data-dialog-close>Cancel</button>
+    </div>
+  </form>
+</dialog>
+<noscript><form class="inline" method="post" action="/projects/{{ id }}/{{ path }}{{ query }}"><button type="submit" class="{{ cls }}">{{ label }}</button></form></noscript>
+{%- endmacro %}
+
+{# Update now (D74) on a changed project: the new files join the manifest without waiting for
+   the settle time. #}
+{% macro update_now(id, size, working, target, query="", cls="btn") -%}
+{{ changed_read(id, "update", "update-now", "Update now", "Update", "update", "", size, working, target, query, cls) }}
+{%- endmacro %}
+
+{# Verify now on a changed project (D74): the verification generation also seals the new files. #}
+{% macro verify_changed(id, size, working, target, query="", cls="btn quiet") -%}
+{{ changed_read(id, "verify", "verify", "Verify now", "Verify", "verification", "It also seals the files added since the last seal.", size, working, target, query, cls) }}
 {%- endmacro %}
